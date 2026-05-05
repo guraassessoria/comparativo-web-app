@@ -2,8 +2,11 @@
 (() => {
   const state = {
     workbook: null,
+    workbooks: [],
     workbookName: '',
     rowsBySheet: new Map(),
+    sourceDefs: [],
+    activeSourceKey: '',
     rawRows: [],
     headerRowIndex: -1,
     columnDefs: [],
@@ -16,6 +19,10 @@
     fileInput: document.getElementById('fileInput'),
     dropZone: document.getElementById('dropZone'),
     sheetSelect: document.getElementById('sheetSelect'),
+    sourceSheetsBlock: document.getElementById('sourceSheetsBlock'),
+    sourceSheetsSelect: document.getElementById('sourceSheetsSelect'),
+    selectAllSourcesBtn: document.getElementById('selectAllSourcesBtn'),
+    clearSourcesBtn: document.getElementById('clearSourcesBtn'),
     analysisModeSelect: document.getElementById('analysisModeSelect'),
     periodModeSelect: document.getElementById('periodModeSelect'),
     dateColumnSelect: document.getElementById('dateColumnSelect'),
@@ -31,6 +38,8 @@
     clearExtractionsBtn: document.getElementById('clearExtractionsBtn'),
     removeDuplicatesToggle: document.getElementById('removeDuplicatesToggle'),
     reconciliationBlock: document.getElementById('reconciliationBlock'),
+    reconciliationScopeSelect: document.getElementById('reconciliationScopeSelect'),
+    reconciliationMatchModeSelect: document.getElementById('reconciliationMatchModeSelect'),
     reconciliationKeysSelect: document.getElementById('reconciliationKeysSelect'),
     selectDefaultReconciliationKeysBtn: document.getElementById('selectDefaultReconciliationKeysBtn'),
     clearReconciliationKeysBtn: document.getElementById('clearReconciliationKeysBtn'),
@@ -267,12 +276,17 @@
   function sampleColumnValues(rows, index, headerRowIndex) {
     const start = headerRowIndex >= 0 ? headerRowIndex + 1 : 0;
     const samples = [];
-    for (let i = start; i < rows.length && samples.length < 3; i += 1) {
+    for (let i = start; i < rows.length && samples.length < 5; i += 1) {
       const value = rows[i]?.[index];
-      const text = String(value ?? '').trim();
-      if (text) samples.push(text.length > 28 ? `${text.slice(0, 28)}...` : text);
+      const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+      if (text) samples.push(text.length > 42 ? `${text.slice(0, 42)}...` : text);
     }
-    return samples.join(' | ');
+    return samples;
+  }
+
+  function cleanColumnLabel(value, fallback) {
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+    return text || fallback;
   }
 
   function buildColumnDefs(rows, headerRowIndex) {
@@ -283,16 +297,14 @@
     return Array.from({ length: maxCols }, (_, index) => {
       const letter = colLetter(index);
       const rawHeader = String(headerRow[index] ?? '').trim();
-      const sample = sampleColumnValues(rows, index, headerRowIndex);
-      let label = rawHeader || `Coluna ${letter}`;
-      label = label.replace(/\s+/g, ' ').trim();
+      const samples = sampleColumnValues(rows, index, headerRowIndex);
+      let label = cleanColumnLabel(rawHeader, `Coluna ${letter}`);
       const count = usedLabels.get(label) || 0;
       usedLabels.set(label, count + 1);
       const uniqueLabel = count ? `${label} (${letter})` : label;
-      const optionText = rawHeader
-        ? `${letter} — ${uniqueLabel}${sample ? ` | ${sample}` : ''}`
-        : `${letter} — ${sample || 'sem amostra'}`;
-      return { index, letter, label: uniqueLabel, optionText };
+      const sampleText = samples.join(' | ');
+      const optionText = `${letter} — ${uniqueLabel}`;
+      return { index, letter, label: uniqueLabel, optionText, sampleText };
     });
   }
 
@@ -337,6 +349,7 @@
       const option = document.createElement('option');
       option.value = String(def.index);
       option.textContent = def.optionText;
+      if (def.sampleText) option.title = `Amostras: ${def.sampleText}`;
       select.appendChild(option);
     });
   }
@@ -364,10 +377,15 @@
       els.valueColumnSelect,
       els.filterColumnsSelect,
       els.clearFilterColumnsBtn,
+      els.sourceSheetsSelect,
+      els.selectAllSourcesBtn,
+      els.clearSourcesBtn,
       els.extractionFieldsSelect,
       els.customExtractionsInput,
       els.selectDefaultExtractionsBtn,
       els.clearExtractionsBtn,
+      els.reconciliationScopeSelect,
+      els.reconciliationMatchModeSelect,
       els.reconciliationKeysSelect,
       els.selectDefaultReconciliationKeysBtn,
       els.clearReconciliationKeysBtn,
@@ -378,15 +396,62 @@
     updateAnalysisModeUI();
   }
 
-  function loadSheet(sheetName) {
-    const rows = state.rowsBySheet.get(sheetName) || [];
-    state.rawRows = rows;
-    state.headerRowIndex = findHeaderRow(rows);
-    state.columnDefs = buildColumnDefs(rows, state.headerRowIndex);
+  function getSourceByKey(key) {
+    return state.sourceDefs.find((source) => source.key === key) || null;
+  }
+
+  function getActiveSourceDef() {
+    return getSourceByKey(els.sheetSelect.value) || state.sourceDefs[0] || null;
+  }
+
+  function selectedSourceDefsForAnalysis(mapping = null) {
+    const analysisMode = mapping?.analysisMode || els.analysisModeSelect?.value || 'comparison';
+    const reconciliationScope = mapping?.reconciliationScope || els.reconciliationScopeSelect?.value || 'single_file';
+
+    if (analysisMode === 'reconciliation' && reconciliationScope === 'between_files') {
+      const selectedKeys = Array.from(els.sourceSheetsSelect?.selectedOptions || []).map((option) => option.value);
+      const selected = selectedKeys.map(getSourceByKey).filter(Boolean);
+      return selected.length ? selected : state.sourceDefs.slice();
+    }
+
+    const active = getActiveSourceDef();
+    return active ? [active] : [];
+  }
+
+  function refreshSourceSelectionDefaults() {
+    if (!els.sourceSheetsSelect) return;
+    const activeKey = els.sheetSelect.value || state.sourceDefs[0]?.key || '';
+    Array.from(els.sourceSheetsSelect.options).forEach((option) => {
+      option.selected = state.sourceDefs.length > 1 ? true : option.value === activeKey;
+    });
+  }
+
+  function updateReconciliationScopeUI() {
+    const isReconciliation = els.analysisModeSelect?.value === 'reconciliation';
+    const isBetweenFiles = els.reconciliationScopeSelect?.value === 'between_files';
+    const showSources = Boolean(isReconciliation && isBetweenFiles);
+    if (els.sourceSheetsBlock) els.sourceSheetsBlock.classList.toggle('hidden', !showSources);
+    if (els.sourceSheetsSelect) els.sourceSheetsSelect.disabled = !showSources || state.sourceDefs.length < 1;
+    if (els.selectAllSourcesBtn) els.selectAllSourcesBtn.disabled = !showSources || state.sourceDefs.length < 1;
+    if (els.clearSourcesBtn) els.clearSourcesBtn.disabled = !showSources || state.sourceDefs.length < 1;
+
+    if (showSources && els.sourceSheetsSelect && !Array.from(els.sourceSheetsSelect.selectedOptions).length) {
+      refreshSourceSelectionDefaults();
+    }
+  }
+
+  function loadSheet(sourceKey) {
+    const source = getSourceByKey(sourceKey) || state.sourceDefs[0];
+    if (!source) return;
+
+    state.activeSourceKey = source.key;
+    state.rawRows = source.rows || [];
+    state.headerRowIndex = source.headerRowIndex;
+    state.columnDefs = source.columnDefs || [];
     state.baseItems = [];
     state.analysis = null;
 
-    const defaults = detectDefaultColumns(rows, state.headerRowIndex, state.columnDefs);
+    const defaults = source.defaults || detectDefaultColumns(state.rawRows, state.headerRowIndex, state.columnDefs);
     const fallback = {
       data: defaults.data >= 0 ? defaults.data : DEFAULT_COLUMNS.data,
       historico: defaults.historico >= 0 ? defaults.historico : DEFAULT_COLUMNS.historico,
@@ -410,10 +475,10 @@
     setSelectValue(els.debitColumnSelect, defaults.debito, fallback.debito);
     setSelectValue(els.creditColumnSelect, defaults.credito, fallback.credito);
     setSelectValue(els.valueColumnSelect, defaults.valor, null);
-    // Filtros adicionais são realmente opcionais: nenhuma coluna é pré-selecionada.
     setMultiSelectValues(els.filterColumnsSelect, []);
     if (els.sideColumnSelect) els.sideColumnSelect.value = '';
     updateReconciliationKeyOptions(true);
+    updateReconciliationScopeUI();
 
     enableMappingControls(state.columnDefs.length > 0);
     els.analyzeBtn.disabled = state.columnDefs.length === 0;
@@ -425,8 +490,8 @@
 
     const headerInfo = state.headerRowIndex >= 0
       ? `Cabeçalho detectado na linha ${state.headerRowIndex + 1}. Confira as colunas antes de analisar.`
-      : 'Sem cabeçalho detectado; as opções foram montadas com letras e amostras das colunas.';
-    setStatus(`${formatNumber(rows.length)} linhas lidas da aba selecionada. ${headerInfo}`, 'success');
+      : 'Sem cabeçalho detectado; as opções foram montadas apenas com letras de coluna para evitar rótulos confusos.';
+    setStatus(`${formatNumber(state.rawRows.length)} linhas lidas da fonte selecionada (${source.label}). ${headerInfo}`, 'success');
   }
 
   function getSelectedFilterDefs() {
@@ -493,7 +558,23 @@
   function updateAnalysisModeUI() {
     if (!els.analysisModeSelect || !els.reconciliationBlock) return;
     const isReconciliation = els.analysisModeSelect.value === 'reconciliation';
+    const isBetweenFiles = els.reconciliationScopeSelect?.value === 'between_files';
+    let matchMode = els.reconciliationMatchModeSelect?.value || 'balance';
+    const hasColumns = state.columnDefs.length > 0;
+
+    if (isReconciliation && isBetweenFiles && els.reconciliationMatchModeSelect && matchMode === 'balance') {
+      els.reconciliationMatchModeSelect.value = 'source_totals';
+      matchMode = 'source_totals';
+      if (els.requireOppositeSignsToggle) els.requireOppositeSignsToggle.checked = false;
+    }
+
     els.reconciliationBlock.classList.toggle('hidden', !isReconciliation);
+    if (els.reconciliationScopeSelect) els.reconciliationScopeSelect.disabled = !hasColumns || !isReconciliation;
+    if (els.reconciliationMatchModeSelect) els.reconciliationMatchModeSelect.disabled = !hasColumns || !isReconciliation;
+    if (els.requireOppositeSignsToggle) {
+      els.requireOppositeSignsToggle.disabled = !hasColumns || !isReconciliation || matchMode === 'source_totals';
+    }
+    updateReconciliationScopeUI();
   }
 
   function reconciliationKeyOptions(filterDefs = null, extractionDefs = null) {
@@ -509,6 +590,9 @@
       { value: 'FIELD::Nome_Extraido', label: 'Nome extraído' },
       { value: 'FIELD::Nota_Fiscal', label: 'Nota Fiscal' },
       { value: 'FIELD::Categoria_Tratada', label: 'Categoria tratada' },
+      { value: 'FIELD::Origem_Lado', label: 'Origem/Lado' },
+      { value: 'FIELD::Arquivo_Origem', label: 'Arquivo de origem' },
+      { value: 'FIELD::Aba_Origem', label: 'Aba de origem' },
       { value: 'FIELD::Ano', label: 'Ano' },
       { value: 'FIELD::Periodo', label: 'Período' },
     ];
@@ -571,9 +655,11 @@
     const extractionDefs = getSelectedExtractionDefs();
     const categoryIndex = state.defaultColumns?.categoria ?? null;
     const analysisMode = els.analysisModeSelect?.value || 'comparison';
+    const reconciliationScope = els.reconciliationScopeSelect?.value || 'single_file';
+    const reconciliationMatchMode = els.reconciliationMatchModeSelect?.value || (reconciliationScope === 'between_files' ? 'source_totals' : 'balance');
     const sideColumn = els.sideColumnSelect?.value === '' ? null : Number(els.sideColumnSelect?.value);
     const tolerance = Math.max(0, parseNumber(els.toleranceInput?.value ?? 0.01));
-    const requireOppositeSigns = Boolean(els.requireOppositeSignsToggle?.checked);
+    const requireOppositeSigns = reconciliationMatchMode === 'source_totals' ? false : Boolean(els.requireOppositeSignsToggle?.checked);
     const reconciliationKeys = getSelectedReconciliationKeys();
 
     if (!Number.isInteger(data) || data < 0) throw new Error('Selecione uma coluna de data válida.');
@@ -584,9 +670,15 @@
     if (analysisMode === 'reconciliation' && !reconciliationKeys.length) {
       throw new Error('Selecione pelo menos uma chave de conciliação.');
     }
+    if (analysisMode === 'reconciliation' && reconciliationScope === 'between_files') {
+      const selectedSources = Array.from(els.sourceSheetsSelect?.selectedOptions || []);
+      if (selectedSources.length < 2) throw new Error('Para conciliação entre arquivos, selecione pelo menos duas fontes.');
+    }
 
     return {
       analysisMode,
+      reconciliationScope,
+      reconciliationMatchMode,
       data,
       historico,
       debito,
@@ -841,7 +933,7 @@
     return { key: 'ANUAL', label: 'Anual', order: 1 };
   }
 
-  function rowToItem(row, sourceIndex, mapping, periodMode) {
+  function rowToItem(row, sourceIndex, mapping, periodMode, source) {
     const rawDate = row[mapping.data];
     const date = parseDate(rawDate);
     const filterValues = buildFilterValues(row, mapping.filterDefs);
@@ -854,10 +946,17 @@
     const debito = mapping.debito === null ? 0 : parseNumber(row[mapping.debito]);
     const credito = mapping.credito === null ? 0 : parseNumber(row[mapping.credito]);
     const valorLiquido = mapping.valor === null ? debito - credito : parseNumber(row[mapping.valor]);
-    const origemLado = Number.isInteger(mapping.sideColumn) && mapping.sideColumn >= 0 ? normalizeText(row[mapping.sideColumn]) : '';
+    const sourceLabel = source?.label || '';
+    const origemLado = Number.isInteger(mapping.sideColumn) && mapping.sideColumn >= 0
+      ? normalizeText(row[mapping.sideColumn])
+      : (mapping.analysisMode === 'reconciliation' && mapping.reconciliationScope === 'between_files' ? normalizeText(sourceLabel) : '');
     const period = periodMeta(date, periodMode);
 
     return {
+      sourceKey: source?.key || '',
+      sourceFile: source?.fileName || '',
+      sourceSheet: source?.sheetName || '',
+      sourceLabel,
       linhaOriginal: sourceIndex + 1,
       data: date,
       dataISO: formatDate(date),
@@ -881,17 +980,22 @@
     };
   }
 
-  function buildBaseItems(rows, mapping, periodMode) {
-    const start = state.headerRowIndex >= 0 ? state.headerRowIndex + 1 : 0;
-    const usableRows = rows.slice(start);
+  function buildBaseItems(sources, mapping, periodMode) {
+    const sourceList = Array.isArray(sources) ? sources : [];
     const preliminary = [];
 
-    usableRows.forEach((row, offset) => {
-      const sourceIndex = start + offset;
-      if (!row || row.every((cell) => cell === null || cell === undefined || String(cell).trim() === '')) return;
-      const item = rowToItem(row, sourceIndex, mapping, periodMode);
-      if (!item.historico && !item.data) return;
-      preliminary.push(item);
+    sourceList.forEach((source) => {
+      const rows = source.rows || [];
+      const start = source.headerRowIndex >= 0 ? source.headerRowIndex + 1 : 0;
+      const usableRows = rows.slice(start);
+
+      usableRows.forEach((row, offset) => {
+        const sourceIndex = start + offset;
+        if (!row || row.every((cell) => cell === null || cell === undefined || String(cell).trim() === '')) return;
+        const item = rowToItem(row, sourceIndex, mapping, periodMode, source);
+        if (!item.historico && !item.data) return;
+        preliminary.push(item);
+      });
     });
 
     const nfMaps = buildNFMaps(preliminary);
@@ -963,6 +1067,32 @@
         }
       }
     }
+
+    return { removed, blocks };
+  }
+
+  function findDuplicateBlocksBySource(items, filterDefs, minRun = 20) {
+    const removed = new Set();
+    const blocks = [];
+    const bySource = new Map();
+
+    items.forEach((item, globalIndex) => {
+      const key = item.sourceKey || '__single_source__';
+      if (!bySource.has(key)) bySource.set(key, []);
+      bySource.get(key).push({ item, globalIndex });
+    });
+
+    bySource.forEach((entries) => {
+      const localItems = entries.map((entry) => entry.item);
+      const result = findDuplicateBlocks(localItems, filterDefs, minRun);
+      result.removed.forEach((localIndex) => removed.add(entries[localIndex].globalIndex));
+      result.blocks.forEach((block) => {
+        blocks.push({
+          Fonte: entries[0]?.item?.sourceLabel || '',
+          ...block,
+        });
+      });
+    });
 
     return { removed, blocks };
   }
@@ -1312,6 +1442,9 @@
       if (rawKey === 'Nome_Extraido') return item.nomeExtraido || 'NAO IDENTIFICADO';
       if (rawKey === 'Nota_Fiscal') return item.nf || item.extracoes?.Nota_Fiscal || 'SEM NF';
       if (rawKey === 'Categoria_Tratada') return item.categoriaTratada || 'SEM CATEGORIA';
+      if (rawKey === 'Origem_Lado') return item.origemLado || 'SEM ORIGEM';
+      if (rawKey === 'Arquivo_Origem') return item.sourceFile || 'SEM ARQUIVO';
+      if (rawKey === 'Aba_Origem') return item.sourceSheet || 'SEM ABA';
       if (rawKey === 'Ano') return item.ano || 'SEM ANO';
       if (rawKey === 'Periodo') return item.periodo || 'SEM PERIODO';
     }
@@ -1334,6 +1467,31 @@
       .join('¦') || `Linha=${item.linhaOriginal}`;
   }
 
+  function usesInvoiceAndNameKeys(keyDefs) {
+    const selected = new Set((keyDefs || []).map((keyDef) => keyDef.value));
+    return selected.has('FIELD::Nota_Fiscal') && selected.has('FIELD::Nome_Extraido');
+  }
+
+  function isConcreteInvoiceNameMatch(group, keyDefs) {
+    if (!usesInvoiceAndNameKeys(keyDefs) || !group || group.Qtde_Linhas <= 1) return false;
+    const nf = group._keys?.['Nota Fiscal'];
+    const name = group._keys?.['Nome extraído'];
+    if (!nf || !name) return false;
+    return normalizeText(nf) !== 'SEM NF' && normalizeText(name) !== 'NAO IDENTIFICADO';
+  }
+
+  function observationForReconciliationStatus(status) {
+    if (status === 'Divergência de valor') {
+      return 'Nota fiscal e nome conferem, mas os valores divergem acima da tolerância.';
+    }
+    if (status === 'Conciliado') return 'Valores conciliados dentro da tolerância.';
+    if (status === 'Conciliado - um lado') return 'Saldo zerado dentro de uma única origem/lado.';
+    if (status === 'Sem contraparte') return 'Não há contraparte para a chave selecionada.';
+    if (status === 'Sem sinais opostos') return 'Há match pela chave, mas os valores não têm sinais opostos.';
+    if (status === 'Diferença') return 'Há diferença acima da tolerância para a chave selecionada.';
+    return '';
+  }
+
   function classifyReconciliationGroup(count, saldo, positiveTotal, negativeTotal, tolerance, requireOppositeSigns, sideCount) {
     if (count <= 1) return 'Sem contraparte';
     if (requireOppositeSigns && (Math.abs(positiveTotal) <= tolerance || Math.abs(negativeTotal) <= tolerance)) return 'Sem sinais opostos';
@@ -1341,9 +1499,20 @@
     return 'Diferença';
   }
 
+  function classifyBetweenFilesGroup(originTotals, tolerance) {
+    const active = [...originTotals.entries()].filter(([, total]) => Math.abs(total || 0) > tolerance);
+    if (active.length <= 1) return { status: 'Sem contraparte', difference: active.length ? Math.abs(active[0][1] || 0) : 0 };
+    const absTotals = active.map(([, total]) => Math.abs(total || 0));
+    const max = Math.max(...absTotals);
+    const min = Math.min(...absTotals);
+    const difference = max - min;
+    return { status: difference <= tolerance ? 'Conciliado' : 'Diferença', difference };
+  }
+
   function buildReconciliationGroups(items, mapping) {
     const keyDefs = mapping.reconciliationKeys || [];
     const groups = new Map();
+    const betweenFiles = mapping.reconciliationScope === 'between_files' || mapping.reconciliationMatchMode === 'source_totals';
 
     items.forEach((item) => {
       const signature = reconciliationKeySignature(item, keyDefs);
@@ -1353,6 +1522,8 @@
           _keys: reconciliationKeyObject(item, keyDefs),
           _linhas: [],
           _origens: new Set(),
+          _originTotals: new Map(),
+          _originCounts: new Map(),
           Qtde_Linhas: 0,
           Qtde_Debitos: 0,
           Qtde_Creditos: 0,
@@ -1366,8 +1537,13 @@
         });
       }
       const group = groups.get(signature);
+      const origin = betweenFiles
+        ? (item.sourceLabel || item.origemLado || 'SEM ORIGEM')
+        : (item.origemLado || item.sourceLabel || 'SEM ORIGEM');
       group._linhas.push(item);
-      if (item.origemLado) group._origens.add(item.origemLado);
+      if (origin) group._origens.add(origin);
+      group._originTotals.set(origin, (group._originTotals.get(origin) || 0) + (item.valorLiquido || 0));
+      group._originCounts.set(origin, (group._originCounts.get(origin) || 0) + 1);
       group.Qtde_Linhas += 1;
       group.Total_Debitos += item.debito || 0;
       group.Total_Creditos += item.credito || 0;
@@ -1387,39 +1563,69 @@
     });
 
     return [...groups.values()].map((group) => {
-      const status = classifyReconciliationGroup(
-        group.Qtde_Linhas,
-        group.Saldo,
-        group.Valor_Positivo,
-        group.Valor_Negativo,
-        mapping.tolerance,
-        mapping.requireOppositeSigns,
-        group._origens.size,
-      );
+      const originTotalsText = [...group._originTotals.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0], 'pt-BR', { numeric: true }))
+        .map(([origin, total]) => `${origin}: ${round2(total)}`)
+        .join(' | ');
+      const originCountText = [...group._originCounts.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0], 'pt-BR', { numeric: true }))
+        .map(([origin, count]) => `${origin}: ${count}`)
+        .join(' | ');
+
+      let status;
+      let differenceAbs;
+      if (betweenFiles) {
+        const classification = classifyBetweenFilesGroup(group._originTotals, mapping.tolerance);
+        status = classification.status;
+        differenceAbs = classification.difference;
+      } else {
+        status = classifyReconciliationGroup(
+          group.Qtde_Linhas,
+          group.Saldo,
+          group.Valor_Positivo,
+          group.Valor_Negativo,
+          mapping.tolerance,
+          mapping.requireOppositeSigns,
+          group._origens.size,
+        );
+        differenceAbs = Math.abs(group.Saldo);
+      }
+
+      const matchedByInvoiceAndName = isConcreteInvoiceNameMatch(group, keyDefs);
+      if (matchedByInvoiceAndName && Math.abs(differenceAbs || 0) > mapping.tolerance && status !== 'Sem contraparte' && status !== 'Sem sinais opostos') {
+        status = 'Divergência de valor';
+      }
+
       return {
         Chave_Conciliacao: group._signature,
         ...group._keys,
         Status_Conciliacao: status,
+        Observacao_Conciliacao: observationForReconciliationStatus(status),
+        Match_NF_Nome: matchedByInvoiceAndName ? 'Sim' : 'Não',
+        Metodo_Conciliacao: betweenFiles ? 'Entre arquivos/abas' : 'Dentro de um arquivo/aba',
         Qtde_Linhas: group.Qtde_Linhas,
         Qtde_Debitos: group.Qtde_Debitos,
         Qtde_Creditos: group.Qtde_Creditos,
         Qtde_Origens: group._origens.size || '',
         Origens_Lados: [...group._origens].sort().join(', '),
+        Total_Por_Origem: originTotalsText,
+        Linhas_Por_Origem: originCountText,
         Total_Debitos: round2(group.Total_Debitos),
         Total_Creditos: round2(group.Total_Creditos),
         Valor_Positivo: round2(group.Valor_Positivo),
         Valor_Negativo: round2(group.Valor_Negativo),
         Saldo: round2(group.Saldo),
-        Diferenca_Absoluta: round2(Math.abs(group.Saldo)),
+        Diferenca_Absoluta: round2(differenceAbs),
         Primeiro_Lancamento: group.Primeiro_Lancamento,
         Ultimo_Lancamento: group.Ultimo_Lancamento,
         _linhas: group._linhas,
+        _originTotals: group._originTotals,
       };
     }).sort((a, b) => {
-      const statusOrder = { 'Diferença': 1, 'Sem contraparte': 2, 'Sem sinais opostos': 3, 'Conciliado - um lado': 4, Conciliado: 5 };
+      const statusOrder = { 'Divergência de valor': 1, 'Diferença': 2, 'Sem contraparte': 3, 'Sem sinais opostos': 4, 'Conciliado - um lado': 5, Conciliado: 6 };
       const byStatus = (statusOrder[a.Status_Conciliacao] || 99) - (statusOrder[b.Status_Conciliacao] || 99);
       if (byStatus !== 0) return byStatus;
-      return Math.abs(b.Saldo || 0) - Math.abs(a.Saldo || 0);
+      return Math.abs(b.Diferenca_Absoluta || b.Saldo || 0) - Math.abs(a.Diferenca_Absoluta || a.Saldo || 0);
     });
   }
 
@@ -1430,7 +1636,12 @@
         rows.push({
           Chave_Conciliacao: group.Chave_Conciliacao,
           Status_Conciliacao: group.Status_Conciliacao,
+          Observacao_Conciliacao: group.Observacao_Conciliacao || '',
+          Match_NF_Nome: group.Match_NF_Nome || '',
           Saldo_Grupo: group.Saldo,
+          Diferenca_Grupo: group.Diferenca_Absoluta,
+          Arquivo_Origem: item.sourceFile || '',
+          Aba_Origem: item.sourceSheet || '',
           Linha_Original: item.linhaOriginal,
           Data: formatDateBR(item.data),
           Ano: item.ano,
@@ -1450,7 +1661,7 @@
     return rows;
   }
 
-  function buildReconciliationPairs(groups, tolerance) {
+  function buildReconciliationPairsWithinFile(groups, tolerance) {
     const rows = [];
     groups.forEach((group) => {
       const positives = group._linhas
@@ -1468,7 +1679,7 @@
         negatives.forEach((neg, negIndex) => {
           if (usedNegatives.has(negIndex)) return;
           const diff = Math.abs((pos.valorLiquido || 0) + (neg.valorLiquido || 0));
-          if (diff <= tolerance && diff < bestDiff) {
+          if (diff < bestDiff) {
             bestIndex = negIndex;
             bestDiff = diff;
           }
@@ -1479,7 +1690,7 @@
           usedPositives.add(posIndex);
           rows.push({
             Chave_Conciliacao: group.Chave_Conciliacao,
-            Status_Par: 'Par conciliado',
+            Status_Par: bestDiff <= tolerance ? 'Par conciliado' : 'Verificar - valor divergente',
             Linha_Positiva: pos.linhaOriginal,
             Data_Positiva: formatDateBR(pos.data),
             Valor_Positivo: round2(pos.valorLiquido),
@@ -1528,6 +1739,137 @@
       });
     });
     return rows;
+  }
+
+  function buildReconciliationPairsBetweenFiles(groups, tolerance) {
+    const rows = [];
+    groups.forEach((group) => {
+      const byOrigin = new Map();
+      group._linhas.forEach((item) => {
+        const origin = item.sourceLabel || item.origemLado || 'SEM ORIGEM';
+        if (!byOrigin.has(origin)) byOrigin.set(origin, []);
+        byOrigin.get(origin).push(item);
+      });
+
+      const origins = [...byOrigin.keys()].sort();
+      if (origins.length < 2) {
+        group._linhas.forEach((item) => {
+          rows.push({
+            Chave_Conciliacao: group.Chave_Conciliacao,
+            Status_Par: 'Linha sem contraparte em outra origem',
+            Origem_Referencia: item.sourceLabel || item.origemLado || '',
+            Arquivo_Referencia: item.sourceFile || '',
+            Linha_Referencia: item.linhaOriginal,
+            Data_Referencia: formatDateBR(item.data),
+            Valor_Referencia: round2(item.valorLiquido),
+            Historico_Referencia: item.historico,
+            Origem_Comparada: '',
+            Arquivo_Comparado: '',
+            Linha_Comparada: '',
+            Data_Comparada: '',
+            Valor_Comparado: '',
+            Historico_Comparado: '',
+            Diferenca: round2(Math.abs(item.valorLiquido || 0)),
+          });
+        });
+        return;
+      }
+
+      const referenceOrigin = origins[0];
+      const referenceRows = [...byOrigin.get(referenceOrigin)].sort((a, b) => Math.abs(b.valorLiquido) - Math.abs(a.valorLiquido));
+      const otherOrigins = origins.slice(1);
+
+      otherOrigins.forEach((origin) => {
+        const candidates = [...byOrigin.get(origin)].sort((a, b) => Math.abs(b.valorLiquido) - Math.abs(a.valorLiquido));
+        const usedCandidates = new Set();
+        const usedReferences = new Set();
+
+        referenceRows.forEach((ref, refIndex) => {
+          let bestIndex = -1;
+          let bestDiff = Infinity;
+          candidates.forEach((candidate, candidateIndex) => {
+            if (usedCandidates.has(candidateIndex)) return;
+            const diff = Math.abs(Math.abs(ref.valorLiquido || 0) - Math.abs(candidate.valorLiquido || 0));
+            if (diff < bestDiff) {
+              bestIndex = candidateIndex;
+              bestDiff = diff;
+            }
+          });
+          if (bestIndex >= 0) {
+            const cmp = candidates[bestIndex];
+            usedCandidates.add(bestIndex);
+            usedReferences.add(refIndex);
+            rows.push({
+              Chave_Conciliacao: group.Chave_Conciliacao,
+              Status_Par: bestDiff <= tolerance ? 'Par conciliado entre origens' : 'Verificar - valor divergente',
+              Origem_Referencia: referenceOrigin,
+              Arquivo_Referencia: ref.sourceFile || '',
+              Linha_Referencia: ref.linhaOriginal,
+              Data_Referencia: formatDateBR(ref.data),
+              Valor_Referencia: round2(ref.valorLiquido),
+              Historico_Referencia: ref.historico,
+              Origem_Comparada: origin,
+              Arquivo_Comparado: cmp.sourceFile || '',
+              Linha_Comparada: cmp.linhaOriginal,
+              Data_Comparada: formatDateBR(cmp.data),
+              Valor_Comparado: round2(cmp.valorLiquido),
+              Historico_Comparado: cmp.historico,
+              Diferenca: round2(bestDiff),
+            });
+          }
+        });
+
+        referenceRows.forEach((ref, refIndex) => {
+          if (usedReferences.has(refIndex)) return;
+          rows.push({
+            Chave_Conciliacao: group.Chave_Conciliacao,
+            Status_Par: 'Referência sem par na origem comparada',
+            Origem_Referencia: referenceOrigin,
+            Arquivo_Referencia: ref.sourceFile || '',
+            Linha_Referencia: ref.linhaOriginal,
+            Data_Referencia: formatDateBR(ref.data),
+            Valor_Referencia: round2(ref.valorLiquido),
+            Historico_Referencia: ref.historico,
+            Origem_Comparada: origin,
+            Arquivo_Comparado: '',
+            Linha_Comparada: '',
+            Data_Comparada: '',
+            Valor_Comparado: '',
+            Historico_Comparado: '',
+            Diferenca: round2(Math.abs(ref.valorLiquido || 0)),
+          });
+        });
+
+        candidates.forEach((cmp, candidateIndex) => {
+          if (usedCandidates.has(candidateIndex)) return;
+          rows.push({
+            Chave_Conciliacao: group.Chave_Conciliacao,
+            Status_Par: 'Comparado sem par na referência',
+            Origem_Referencia: referenceOrigin,
+            Arquivo_Referencia: '',
+            Linha_Referencia: '',
+            Data_Referencia: '',
+            Valor_Referencia: '',
+            Historico_Referencia: '',
+            Origem_Comparada: origin,
+            Arquivo_Comparado: cmp.sourceFile || '',
+            Linha_Comparada: cmp.linhaOriginal,
+            Data_Comparada: formatDateBR(cmp.data),
+            Valor_Comparado: round2(cmp.valorLiquido),
+            Historico_Comparado: cmp.historico,
+            Diferenca: round2(Math.abs(cmp.valorLiquido || 0)),
+          });
+        });
+      });
+    });
+    return rows;
+  }
+
+  function buildReconciliationPairs(groups, mapping) {
+    if (mapping.reconciliationScope === 'between_files' || mapping.reconciliationMatchMode === 'source_totals') {
+      return buildReconciliationPairsBetweenFiles(groups, mapping.tolerance);
+    }
+    return buildReconciliationPairsWithinFile(groups, mapping.tolerance);
   }
 
   function groupAllByNF(items) {
@@ -1597,7 +1939,9 @@
   function analyze() {
     const mapping = getSelectedMapping();
     const periodMode = els.periodModeSelect.value;
-    const baseItems = buildBaseItems(state.rawRows, mapping, periodMode);
+    const selectedSources = selectedSourceDefsForAnalysis(mapping);
+    if (!selectedSources.length) throw new Error('Nenhuma fonte selecionada para análise.');
+    const baseItems = buildBaseItems(selectedSources, mapping, periodMode);
     if (!baseItems.length) throw new Error('Nenhuma linha válida encontrada na planilha. Confira as colunas selecionadas.');
 
     const years = getAvailableYears(baseItems);
@@ -1606,7 +1950,7 @@
     let removed = new Set();
 
     if (els.removeDuplicatesToggle.checked) {
-      const duplicates = findDuplicateBlocks(items, mapping.filterDefs);
+      const duplicates = findDuplicateBlocksBySource(items, mapping.filterDefs);
       duplicateBlocks = duplicates.blocks;
       removed = duplicates.removed;
       items.forEach((item, idx) => { item.excluidaDuplicidade = removed.has(idx); });
@@ -1620,16 +1964,17 @@
       const reconciliationGroups = reconciliationGroupsRaw.map((group) => {
         const clean = { ...group };
         delete clean._linhas;
+        delete clean._originTotals;
         return clean;
       });
       const reconciliationLines = buildReconciliationLines(reconciliationGroupsRaw);
-      const reconciliationPairs = buildReconciliationPairs(reconciliationGroupsRaw, mapping.tolerance);
+      const reconciliationPairs = buildReconciliationPairs(reconciliationGroupsRaw, mapping);
       const nfSummaryAll = groupAllByNF(usedItems);
       const extractionSummaryAll = groupAllByExtractions(usedItems, mapping.extractionDefs);
       const totalSaldo = usedItems.reduce((acc, item) => acc + item.valorLiquido, 0);
       const divergentGroups = reconciliationGroups.filter((row) => row.Status_Conciliacao !== 'Conciliado' && row.Status_Conciliacao !== 'Conciliado - um lado');
       const reconciledGroups = reconciliationGroups.length - divergentGroups.length;
-      const saldoDivergente = divergentGroups.reduce((acc, row) => acc + Math.abs(row.Saldo || 0), 0);
+      const saldoDivergente = divergentGroups.reduce((acc, row) => acc + Math.abs(row.Diferenca_Absoluta ?? row.Saldo ?? 0), 0);
 
       state.analysis = {
         mode: 'reconciliation',
@@ -1637,6 +1982,7 @@
         periodMode,
         periodLabel: PERIOD_LABELS[periodMode] || periodMode,
         mapping,
+        selectedSources,
         allItems: items,
         usedItems,
         reconciliationGroups,
@@ -1688,6 +2034,7 @@
       periodMode,
       periodLabel: PERIOD_LABELS[periodMode] || periodMode,
       mapping,
+      selectedSources,
       allItems: items,
       usedItems,
       comparison,
@@ -1740,8 +2087,9 @@
       const duplicateText = analysis.totals.duplicatesRemoved
         ? `${formatNumber(analysis.totals.duplicatesRemoved)} linhas removidas por duplicidade de bloco.`
         : 'Nenhum bloco duplicado removido.';
+      const scopeText = analysis.mapping.reconciliationScope === 'between_files' ? 'entre arquivos/abas' : 'dentro de um arquivo/aba';
       setStatus(
-        `Conciliação concluída. ${formatNumber(analysis.totals.reconciledGroups)} grupos conciliados e ${formatNumber(analysis.totals.divergentGroups)} grupos pendentes. ${duplicateText}`,
+        `Conciliação ${scopeText} concluída. ${formatNumber(analysis.totals.reconciledGroups)} grupos conciliados e ${formatNumber(analysis.totals.divergentGroups)} grupos pendentes. ${duplicateText}`,
         'success',
       );
       return;
@@ -1829,6 +2177,7 @@
       const dynamicKeyHeaders = (analysis.mapping.reconciliationKeys || []).map((key) => key.label);
       const headers = [
         'Status_Conciliacao',
+        'Observacao_Conciliacao',
         ...dynamicKeyHeaders,
         'Qtde_Linhas',
         'Qtde_Debitos',
@@ -1900,37 +2249,82 @@
       .replace(/'/g, '&#039;');
   }
 
-  async function handleFile(file) {
-    if (!file) return;
+  async function handleFiles(files) {
+    const fileList = Array.from(files || []).filter(Boolean);
+    if (!fileList.length) return;
     resetState(false);
-    state.workbookName = file.name.replace(/\.[^.]+$/, '');
-    setStatus('Lendo arquivo...', 'muted');
+    setStatus('Lendo arquivo(s)...', 'muted');
 
-    const arrayBuffer = await file.arrayBuffer();
-    const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
-    state.workbook = workbook;
+    state.workbooks = [];
+    state.sourceDefs = [];
     state.rowsBySheet.clear();
 
+    for (let fileIndex = 0; fileIndex < fileList.length; fileIndex += 1) {
+      const file = fileList[fileIndex];
+      const workbookName = file.name.replace(/\.[^.]+$/, '');
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
+      state.workbooks.push({ fileName: file.name, workbookName, workbook });
+
+      workbook.SheetNames.forEach((sheetName, sheetIndex) => {
+        const sheet = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true });
+        const key = `${fileIndex}::${sheetIndex}::${workbookName}::${sheetName}`;
+        const label = fileList.length > 1 ? `${file.name} / ${sheetName}` : sheetName;
+        const headerRowIndex = findHeaderRow(rows);
+        const columnDefs = buildColumnDefs(rows, headerRowIndex);
+        const defaults = detectDefaultColumns(rows, headerRowIndex, columnDefs);
+        const source = {
+          key,
+          fileIndex,
+          sheetIndex,
+          fileName: file.name,
+          workbookName,
+          sheetName,
+          label,
+          rows,
+          headerRowIndex,
+          columnDefs,
+          defaults,
+        };
+        state.sourceDefs.push(source);
+        state.rowsBySheet.set(key, rows);
+      });
+    }
+
+    state.workbook = state.workbooks[0]?.workbook || null;
+    state.workbookName = fileList.length === 1
+      ? fileList[0].name.replace(/\.[^.]+$/, '')
+      : `${fileList.length} arquivos importados`;
+
     els.sheetSelect.innerHTML = '';
-    workbook.SheetNames.forEach((sheetName) => {
-      const sheet = workbook.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true });
-      state.rowsBySheet.set(sheetName, rows);
+    els.sourceSheetsSelect.innerHTML = '';
+    state.sourceDefs.forEach((source) => {
       const option = document.createElement('option');
-      option.value = sheetName;
-      option.textContent = sheetName;
+      option.value = source.key;
+      option.textContent = source.label;
       els.sheetSelect.appendChild(option);
+
+      const sourceOption = document.createElement('option');
+      sourceOption.value = source.key;
+      sourceOption.textContent = source.label;
+      sourceOption.selected = true;
+      els.sourceSheetsSelect.appendChild(sourceOption);
     });
 
-    els.sheetSelect.disabled = workbook.SheetNames.length < 2;
+    els.sheetSelect.disabled = state.sourceDefs.length < 2;
     els.resetBtn.disabled = false;
-    if (!workbook.SheetNames.length) throw new Error('O arquivo não contém abas legíveis.');
-    loadSheet(workbook.SheetNames[0]);
+    if (!state.sourceDefs.length) throw new Error('Nenhum arquivo contém abas legíveis.');
+    loadSheet(state.sourceDefs[0].key);
+    refreshSourceSelectionDefaults();
+    updateReconciliationScopeUI();
   }
 
   function toBaseExportRows(items, filterDefs, extractionDefs) {
     return items.map((item) => {
       const row = {
+        Arquivo_Origem: item.sourceFile || '',
+        Aba_Origem: item.sourceSheet || '',
         Linha_Original: item.linhaOriginal,
         Data: formatDateBR(item.data),
         Ano: item.ano,
@@ -1953,6 +2347,7 @@
         Credito: round2(item.credito),
         Valor_Liquido: round2(item.valorLiquido),
         Metodo_Extracao: item.metodoExtracao,
+        Excluida_Duplicidade: item.excluidaDuplicidade ? 'Sim' : 'Não',
       };
     });
   }
@@ -1961,6 +2356,12 @@
     if (index === null || index === undefined || index === '') return 'Não usado';
     const def = state.columnDefs.find((col) => col.index === Number(index));
     return def ? `${def.letter} - ${def.label}` : String(index);
+  }
+
+  function selectedSourceNames(analysis) {
+    const sources = analysis?.selectedSources || [];
+    if (!sources.length) return els.sheetSelect?.selectedOptions?.[0]?.textContent || state.workbookName || 'Fonte importada';
+    return sources.map((source) => source.label).join('; ');
   }
 
   function buildSummaryRows(analysis) {
@@ -1973,9 +2374,10 @@
       const rows = [
         ['Conciliação por histórico e chaves selecionadas'],
         [],
-        ['Arquivo analisado', state.workbookName || 'Arquivo importado'],
-        ['Aba analisada', els.sheetSelect.value],
+        ['Arquivo(s)/fonte(s) analisados', selectedSourceNames(analysis)],
+        ['Fonte usada para mapear colunas', els.sheetSelect?.selectedOptions?.[0]?.textContent || els.sheetSelect.value],
         ['Tipo de análise', 'Conciliação'],
+        ['Escopo da conciliação', mapping.reconciliationScope === 'between_files' ? 'Entre arquivos/abas' : 'Dentro de um único arquivo/aba'],
         ['Visão de período', analysis.periodLabel],
         ['Anos detectados', analysis.detectedYears.join(', ') || 'Nenhum ano identificado'],
         ['Coluna de data', selectedColumnName(mapping.data)],
@@ -1988,7 +2390,7 @@
         ['Campos extraídos do histórico', extractionNames],
         ['Chaves de conciliação', keyNames],
         ['Tolerância de valor', mapping.tolerance],
-        ['Exige sinais opostos', mapping.requireOppositeSigns ? 'Sim' : 'Não'],
+        ['Exige sinais opostos', mapping.reconciliationScope === 'between_files' ? 'Não se aplica ao modo entre arquivos' : (mapping.requireOppositeSigns ? 'Sim' : 'Não')],
         ['Linhas originais lidas', analysis.totals.originalRows],
         ['Linhas usadas na conciliação', analysis.totals.usedRows],
         ['Linhas excluídas como duplicação de bloco', analysis.totals.duplicatesRemoved],
@@ -2001,7 +2403,7 @@
         ['Saldo absoluto dos grupos pendentes', analysis.totals.saldoDivergente],
         [],
         ['Top 15 grupos pendentes por diferença'],
-        ['Status', 'Chave_Conciliacao', 'Qtde_Linhas', 'Valor_Positivo', 'Valor_Negativo', 'Saldo', 'Diferenca_Absoluta'],
+        ['Status', 'Observação', 'Chave_Conciliacao', 'Qtde_Linhas', 'Valor_Positivo', 'Valor_Negativo', 'Saldo', 'Diferenca_Absoluta'],
       ];
 
       analysis.reconciliationGroups
@@ -2010,6 +2412,7 @@
         .forEach((row) => {
           rows.push([
             row.Status_Conciliacao,
+            row.Observacao_Conciliacao || '',
             row.Chave_Conciliacao,
             row.Qtde_Linhas,
             row.Valor_Positivo,
@@ -2026,8 +2429,8 @@
     const rows = [
       [`Comparativo ${analysis.currentYear} x ${analysis.previousYear} por nome extraído do histórico`],
       [],
-      ['Arquivo analisado', state.workbookName || 'Arquivo importado'],
-      ['Aba analisada', els.sheetSelect.value],
+      ['Arquivo/fonte analisado', selectedSourceNames(analysis)],
+      ['Fonte usada para mapear colunas', els.sheetSelect?.selectedOptions?.[0]?.textContent || els.sheetSelect.value],
       ['Tipo de análise', 'Comparação'],
       ['Visão de período', analysis.periodLabel],
       ['Anos detectados', analysis.detectedYears.join(', ')],
@@ -2078,6 +2481,9 @@
     return rows.map((row) => {
       const copy = { ...row };
       delete copy.Periodo_Ordem;
+      Object.keys(copy).forEach((key) => {
+        if (key.startsWith('_')) delete copy[key];
+      });
       return copy;
     });
   }
@@ -2158,7 +2564,10 @@
 
   function resetState(resetInput = true) {
     state.workbook = null;
+    state.workbooks = [];
     state.workbookName = '';
+    state.sourceDefs = [];
+    state.activeSourceKey = '';
     state.rowsBySheet.clear();
     state.rawRows = [];
     state.headerRowIndex = -1;
@@ -2169,7 +2578,10 @@
 
     if (resetInput) els.fileInput.value = '';
     els.sheetSelect.innerHTML = '';
+    if (els.sourceSheetsSelect) els.sourceSheetsSelect.innerHTML = '';
     if (els.analysisModeSelect) els.analysisModeSelect.value = 'comparison';
+    if (els.reconciliationScopeSelect) els.reconciliationScopeSelect.value = 'single_file';
+    if (els.reconciliationMatchModeSelect) els.reconciliationMatchModeSelect.value = 'balance';
     els.dateColumnSelect.innerHTML = '';
     els.historyColumnSelect.innerHTML = '';
     els.debitColumnSelect.innerHTML = '';
@@ -2185,6 +2597,7 @@
     }
     if (els.customExtractionsInput) els.customExtractionsInput.value = '';
     els.sheetSelect.disabled = true;
+    if (els.sourceSheetsBlock) els.sourceSheetsBlock.classList.add('hidden');
     enableMappingControls(false);
     els.analyzeBtn.disabled = true;
     els.exportBtn.disabled = true;
@@ -2201,6 +2614,18 @@
 
   ['change'].forEach((eventName) => {
     els.analysisModeSelect.addEventListener(eventName, () => { updateAnalysisModeUI(); els.exportBtn.disabled = true; });
+    els.reconciliationScopeSelect.addEventListener(eventName, () => {
+      if (els.reconciliationScopeSelect.value === 'between_files') {
+        if (els.reconciliationMatchModeSelect) els.reconciliationMatchModeSelect.value = 'source_totals';
+        if (els.requireOppositeSignsToggle) els.requireOppositeSignsToggle.checked = false;
+      } else if (els.reconciliationMatchModeSelect) {
+        els.reconciliationMatchModeSelect.value = 'balance';
+        if (els.requireOppositeSignsToggle) els.requireOppositeSignsToggle.checked = true;
+      }
+      updateAnalysisModeUI();
+      els.exportBtn.disabled = true;
+    });
+    if (els.reconciliationMatchModeSelect) els.reconciliationMatchModeSelect.addEventListener(eventName, () => { updateAnalysisModeUI(); els.exportBtn.disabled = true; });
     els.dateColumnSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
     els.historyColumnSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
     els.debitColumnSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
@@ -2210,6 +2635,7 @@
     els.extractionFieldsSelect.addEventListener(eventName, () => { updateReconciliationKeyOptions(false); els.exportBtn.disabled = true; });
     els.customExtractionsInput.addEventListener('input', () => { updateReconciliationKeyOptions(false); els.exportBtn.disabled = true; });
     els.reconciliationKeysSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
+    els.sourceSheetsSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
     els.sideColumnSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
     els.toleranceInput.addEventListener('input', () => { els.exportBtn.disabled = true; });
     els.requireOppositeSignsToggle.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
@@ -2247,8 +2673,7 @@
   });
 
   els.fileInput.addEventListener('change', (event) => {
-    const [file] = event.target.files;
-    handleFile(file).catch((error) => setStatus(`Erro ao ler arquivo: ${error.message}`, 'error'));
+    handleFiles(event.target.files).catch((error) => setStatus(`Erro ao ler arquivo: ${error.message}`, 'error'));
   });
 
   els.dropZone.addEventListener('dragover', (event) => {
@@ -2263,11 +2688,20 @@
   els.dropZone.addEventListener('drop', (event) => {
     event.preventDefault();
     els.dropZone.classList.remove('dragover');
-    const [file] = event.dataTransfer.files;
-    handleFile(file).catch((error) => setStatus(`Erro ao ler arquivo: ${error.message}`, 'error'));
+    handleFiles(event.dataTransfer.files).catch((error) => setStatus(`Erro ao ler arquivo: ${error.message}`, 'error'));
   });
 
   els.sheetSelect.addEventListener('change', () => loadSheet(els.sheetSelect.value));
+
+  els.selectAllSourcesBtn.addEventListener('click', () => {
+    Array.from(els.sourceSheetsSelect.options).forEach((option) => { option.selected = true; });
+    els.exportBtn.disabled = true;
+  });
+
+  els.clearSourcesBtn.addEventListener('click', () => {
+    Array.from(els.sourceSheetsSelect.options).forEach((option) => { option.selected = false; });
+    els.exportBtn.disabled = true;
+  });
 
   els.analyzeBtn.addEventListener('click', () => {
     try {

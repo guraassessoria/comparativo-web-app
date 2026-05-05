@@ -1,126 +1,100 @@
-# Motor de comparação e conciliação por histórico
+# Motor de análise e conciliação por histórico
 
-Aplicação web estática para processar planilhas Excel no navegador, extrair informações da coluna de histórico e exportar análises tratadas em Excel.
+Aplicação web estática para análise contábil a partir de arquivos Excel/CSV.
 
-## Publicação
+## O que faz
 
-A aplicação não precisa de backend. Publique os arquivos abaixo na raiz do GitHub Pages, Netlify, Vercel ou qualquer hospedagem estática:
+- Upload de um ou mais arquivos `.xlsx`, `.xls`, `.xlsm` ou `.csv`.
+- Processamento local no navegador, sem backend.
+- Mapeamento manual das colunas de:
+  - data;
+  - histórico;
+  - débito;
+  - crédito;
+  - valor pronto opcional;
+  - filtros adicionais opcionais.
+- Extração automática de informações do histórico:
+  - nome;
+  - nota fiscal;
+  - CNPJ/CPF;
+  - competência;
+  - contrato;
+  - pedido/OC;
+  - parcela;
+  - documento;
+  - campos personalizados por regex.
+- Tratamento de `AUTONOMO`, `AUTONOMOS` e `INSS S/ PF` como `AUTONOMO`.
+- Exportação de Excel tratado.
 
-- `index.html`
-- `styles.css`
-- `app.js`
-- `.nojekyll`
+## Tipos de análise
 
-A biblioteca SheetJS é carregada via CDN em `index.html`.
+### 1. Comparação
 
-## Fluxo de uso
-
-1. Faça upload de uma planilha `.xlsx`, `.xls`, `.xlsm` ou `.csv`.
-2. Selecione a aba de origem.
-3. Escolha o tipo de análise:
-   - **Comparação**
-   - **Conciliação**
-4. Selecione:
-   - coluna de data;
-   - coluna de histórico;
-   - coluna de débito;
-   - coluna de crédito;
-   - ou coluna de valor pronto, se houver.
-5. Opcionalmente, selecione filtros adicionais.
-6. Opcionalmente, selecione campos a extrair do histórico.
-7. Clique em **Analisar planilha**.
-8. Clique em **Exportar Excel tratado**.
-
-## Modo Comparação
-
-Compara automaticamente os dois anos mais recentes encontrados na coluna de data.
-
-Exemplo: se a base tiver 2026 e 2025, a aplicação gera o comparativo 2026 x 2025.
-
-A visão de período pode ser:
+Compara automaticamente os dois anos mais recentes encontrados na coluna de data. O usuário pode escolher a visão:
 
 - mensal;
 - trimestral;
 - semestral;
 - anual.
 
-Abas exportadas no modo comparação:
+### 2. Conciliação
 
-- `Resumo`
-- `Comparativo_Nome`
-- `Resumo_Periodo`
-- `Resumo_Categoria`
-- `Resumo_Filtros`
-- `Resumo_NF`
-- `Resumo_Extracoes`
-- `Extracao_Nome`
-- `Base_Tratada`
-- `Duplicidades`
+A conciliação pode ser feita de duas formas.
 
-## Modo Conciliação
+#### Dentro de um único arquivo/aba
 
-Agrupa os lançamentos por uma ou mais chaves e verifica se os valores se compensam dentro de uma tolerância.
+Agrupa lançamentos pelas chaves selecionadas e verifica se os valores se compensam dentro da tolerância.
 
-Chaves disponíveis:
+Uso típico:
 
-- nome extraído;
-- nota fiscal;
-- categoria tratada;
-- ano;
-- período;
-- filtros adicionais selecionados;
-- campos extraídos do histórico.
+- provisão x baixa;
+- débito x crédito;
+- imposto retido x nota fiscal;
+- lançamentos duplicados ou pendentes dentro da mesma base.
 
-Configurações disponíveis:
+#### Entre arquivos/abas
 
-- tolerância de valor;
-- coluna opcional de origem/lado, como Banco/Contábil ou Extrato/Razão;
-- opção para exigir sinais opostos dentro do grupo.
+Permite carregar dois ou mais arquivos, ou usar abas diferentes de um mesmo arquivo, e comparar totais por origem usando as chaves selecionadas.
 
-Classificações possíveis:
+Uso típico:
 
-- `Conciliado`
-- `Conciliado - um lado`
-- `Diferença`
-- `Sem contraparte`
-- `Sem sinais opostos`
+- razão contábil x extrato;
+- contas a pagar x contabilidade;
+- sistema operacional x ERP;
+- base do cliente x base interna.
 
-Abas exportadas no modo conciliação:
+Neste modo, cada fonte selecionada vira uma origem/lado. A aplicação pode conciliar por:
 
-- `Resumo`
-- `Conciliacao_Grupos`
-- `Conciliacao_Linhas`
-- `Conciliacao_Pares`
-- `Resumo_NF`
-- `Resumo_Extracoes`
-- `Base_Tratada`
-- `Duplicidades`
+- **saldo do grupo zerado**, útil quando os valores aparecem com sinais opostos; ou
+- **totais absolutos por origem**, útil quando os arquivos têm valores com o mesmo sinal.
 
-## Campos extraídos do histórico
+### Tratamento de divergência de valor
 
-Extrações padrão disponíveis:
+Quando a conciliação usa **Nota Fiscal + Nome extraído** como chave e encontra contraparte pela chave, mas o valor fica diferente acima da tolerância, o grupo passa a ser marcado como **Divergência de valor**.
 
-- Nota Fiscal
-- CNPJ/CPF
-- Competência
-- Contrato
-- Pedido/OC
-- Parcela
-- Documento
+Na aba `Conciliacao_Pares`, o par correspondente é marcado como **Verificar - valor divergente**, em vez de aparecer apenas como linha sem par. Isso permite auditar rapidamente casos em que a identificação bate, mas o valor não fecha.
 
-Também é possível criar extrações personalizadas, uma por linha, no formato:
+## Publicação no GitHub Pages
 
-```text
-Projeto=PROJ(?:ETO)?\s*[:\-]?\s*([A-Z0-9 ._/-]+)
-Centro=CC\s*[:\-]?\s*([0-9.]+)
-```
+1. Suba estes arquivos na raiz do repositório:
+   - `index.html`
+   - `styles.css`
+   - `app.js`
+   - `README.md`
+   - `.nojekyll`
+2. Vá em **Settings > Pages**.
+3. Em **Build and deployment**, selecione **Deploy from a branch**.
+4. Escolha:
+   - branch: `main`
+   - folder: `/ (root)`
+5. Clique em **Save**.
 
-A primeira captura entre parênteses será exportada.
+## Observação importante
 
-## Regras fixas
+Na conciliação entre arquivos/abas, a aplicação usa o mesmo mapeamento de colunas para todas as fontes selecionadas. Portanto, o melhor resultado ocorre quando os arquivos têm layout equivalente ou colunas nas mesmas posições.
 
-- `AUTONOMO`, `AUTONOMOS` e `INSS S/ PF` são tratados como `AUTONOMO`.
-- Valor líquido padrão: `Débito - Crédito`.
-- Quando selecionada uma coluna de valor pronto, ela substitui o cálculo `Débito - Crédito`.
-- A aplicação pode remover blocos duplicados automaticamente.
-- O processamento ocorre localmente no navegador.
+## Ajuste de rótulos das colunas
+
+Quando a planilha não possui cabeçalho detectável, os seletores exibem apenas a letra da coluna, por exemplo `A — Coluna A`, `B — Coluna B` etc. As amostras das células não são mais concatenadas no rótulo do seletor, para evitar opções confusas em abas resumidas, pivotadas ou com várias linhas de título.
+
+Se a aba tiver cabeçalho claro, o seletor exibirá a letra e o nome do cabeçalho, por exemplo `D — Histórico`.

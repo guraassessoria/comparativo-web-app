@@ -13,9 +13,9 @@
         <p class="eyebrow">Análise contábil automática</p>
         <h1>Motor de comparação e conciliação por histórico</h1>
         <p class="lead">
-          Faça upload de uma planilha Excel, selecione as colunas de data, histórico, filtros opcionais
-          e campos a extrair do histórico. A aplicação permite escolher entre comparação temporal ou conciliação,
-          gerando bases tratadas e relatórios exportáveis em Excel.
+          Faça upload de uma ou mais planilhas Excel, selecione as colunas de data, histórico, filtros opcionais
+          e campos a extrair do histórico. A aplicação permite escolher entre comparação temporal ou conciliação
+          dentro de um único arquivo ou entre arquivos, gerando bases tratadas e relatórios exportáveis em Excel.
         </p>
       </div>
       <div class="hero-actions">
@@ -25,16 +25,17 @@
 
     <section class="card uploader-card">
       <label id="dropZone" class="drop-zone" for="fileInput">
-        <input id="fileInput" type="file" accept=".xlsx,.xls,.xlsm,.csv" />
+        <input id="fileInput" type="file" accept=".xlsx,.xls,.xlsm,.csv" multiple />
         <span class="upload-icon">↥</span>
-        <strong>Selecione ou arraste o arquivo Excel</strong>
-        <small>Arquivos .xlsx, .xls, .xlsm ou .csv. O processamento ocorre localmente no navegador.</small>
+        <strong>Selecione ou arraste um ou mais arquivos Excel</strong>
+        <small>Arquivos .xlsx, .xls, .xlsm ou .csv. Para conciliação entre arquivos, selecione todos no mesmo upload. O processamento ocorre localmente no navegador.</small>
       </label>
 
       <div class="controls-grid">
         <label>
-          Aba de origem
+          Aba de origem / mapeamento
           <select id="sheetSelect" disabled></select>
+          <small>Na conciliação entre arquivos, esta fonte é usada para mapear as colunas. As fontes selecionadas devem ter layout equivalente.</small>
         </label>
 
         <label>
@@ -86,6 +87,18 @@
         </label>
       </div>
 
+      <div id="sourceSheetsBlock" class="filter-column-block hidden">
+        <label>
+          Fontes para conciliação entre arquivos
+          <select id="sourceSheetsSelect" multiple disabled></select>
+          <div class="inline-actions">
+            <button id="selectAllSourcesBtn" class="secondary-btn compact-btn" disabled type="button">Selecionar todas</button>
+            <button id="clearSourcesBtn" class="secondary-btn compact-btn" disabled type="button">Limpar fontes</button>
+          </div>
+          <small>Use esta seleção quando o tipo de análise for Conciliação e o escopo for Entre arquivos. Use Ctrl/Cmd para marcar múltiplas fontes.</small>
+        </label>
+      </div>
+
       <div class="filter-column-block">
         <label>
           Colunas de filtros adicionais opcionais
@@ -128,9 +141,27 @@ Centro=CC\s*[:\-]?\s*([0-9.]+)"></textarea>
             <p class="eyebrow">Conciliação</p>
             <h3>Configuração da chave e tolerância</h3>
           </div>
-          <small>Use esta opção para identificar grupos que se compensam, diferenças pendentes e linhas sem contraparte.</small>
+          <small>Use esta opção para identificar grupos que se compensam, diferenças pendentes, valores divergentes e linhas sem contraparte.</small>
         </div>
         <div class="reconciliation-grid">
+          <label>
+            Escopo da conciliação
+            <select id="reconciliationScopeSelect" disabled>
+              <option value="single_file">Um único arquivo</option>
+              <option value="between_files">Entre arquivos</option>
+            </select>
+            <small>No modo entre arquivos, cada arquivo/aba selecionado vira uma origem automática. Use fontes com layout equivalente.</small>
+          </label>
+
+          <label>
+            Critério de conciliação
+            <select id="reconciliationMatchModeSelect" disabled>
+              <option value="balance">Saldo do grupo deve zerar</option>
+              <option value="source_totals">Comparar totais absolutos entre origens/arquivos</option>
+            </select>
+            <small>Use saldo zero para lançamentos que se compensam. Use totais por origem para arquivos com valores no mesmo sinal.</small>
+          </label>
+
           <label>
             Chaves de conciliação
             <select id="reconciliationKeysSelect" multiple disabled></select>
@@ -156,6 +187,7 @@ Centro=CC\s*[:\-]?\s*([0-9.]+)"></textarea>
           <label class="checkbox-label">
             <input id="requireOppositeSignsToggle" type="checkbox" checked disabled />
             Exigir valores de sinais opostos dentro do grupo
+            <small>Aplicável ao critério de saldo zerado. No critério por origem/arquivo, a aplicação compara totais absolutos.</small>
           </label>
         </div>
       </div>
@@ -239,8 +271,11 @@ Centro=CC\s*[:\-]?\s*([0-9.]+)"></textarea>
           <li>Para retenções de IRRF, ISS, INSS e PCC, procura a NF correspondente para recuperar o nome completo do fornecedor.</li>
           <li>Calcula Valor Líquido = Débito - Crédito, salvo quando uma coluna de valor pronto for selecionada.</li>
           <li>Detecta blocos inteiros repetidos e remove a segunda ocorrência quando o bloco repetido tem pelo menos 20 linhas consecutivas.</li>
+          <li>Na conciliação, o usuário escolhe se quer conciliar dentro de um único arquivo ou entre arquivos.</li>
+          <li>Na conciliação entre arquivos, cada arquivo importado vira uma origem/lado automática para apuração de contrapartes.</li>
           <li>Na conciliação, o usuário escolhe chaves como Nome, Nota Fiscal, Período, Categoria, filtros selecionados e campos extraídos do histórico.</li>
-          <li>Na conciliação, grupos com saldo dentro da tolerância são classificados como Conciliado; grupos com diferença, sem contraparte ou sem sinais opostos são destacados.</li>
+          <li>Na conciliação, os grupos podem ser classificados por saldo zerado ou por comparação de totais absolutos entre origens/arquivos, conforme o critério selecionado.</li>
+          <li>Quando Nota Fiscal + Nome conferem, mas o valor diverge acima da tolerância, marca o grupo como Divergência de valor e o par como Verificar - valor divergente.</li>
           <li>Exporta abas diferentes conforme o modo: comparação temporal ou conciliação.</li>
         </ol>
         <button class="primary-btn" type="submit">Fechar</button>
