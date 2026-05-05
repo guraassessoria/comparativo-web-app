@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Comparativo automático por histórico</title>
+  <title>Motor de análise e conciliação por histórico</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -11,10 +11,11 @@
     <section class="hero card">
       <div>
         <p class="eyebrow">Análise contábil automática</p>
-        <h1>Comparativo por nome extraído do histórico</h1>
+        <h1>Motor de comparação e conciliação por histórico</h1>
         <p class="lead">
-          Faça upload de uma planilha Excel, selecione as colunas de data, histórico e filtros opcionais,
-          escolha a visão mensal, trimestral, semestral ou anual, e exporte um novo Excel tratado.
+          Faça upload de uma planilha Excel, selecione as colunas de data, histórico, filtros opcionais
+          e campos a extrair do histórico. A aplicação permite escolher entre comparação temporal ou conciliação,
+          gerando bases tratadas e relatórios exportáveis em Excel.
         </p>
       </div>
       <div class="hero-actions">
@@ -34,6 +35,14 @@
         <label>
           Aba de origem
           <select id="sheetSelect" disabled></select>
+        </label>
+
+        <label>
+          Tipo de análise
+          <select id="analysisModeSelect" disabled>
+            <option value="comparison">Comparação</option>
+            <option value="reconciliation">Conciliação</option>
+          </select>
         </label>
 
         <label>
@@ -81,8 +90,74 @@
         <label>
           Colunas de filtros adicionais opcionais
           <select id="filterColumnsSelect" multiple disabled></select>
-          <small>Selecione nenhuma, uma ou várias colunas. Use Ctrl/Cmd para marcar múltiplas opções.</small>
+          <button id="clearFilterColumnsBtn" class="secondary-btn compact-btn" disabled type="button">Não usar filtros adicionais</button>
+          <small>Opcional: deixe sem seleção para analisar apenas por nome e período. Use Ctrl/Cmd para marcar múltiplas opções.</small>
         </label>
+      </div>
+
+      <div class="extraction-block">
+        <label>
+          Campos extraídos do histórico para análises adicionais
+          <select id="extractionFieldsSelect" multiple disabled>
+            <option value="Nota_Fiscal" selected>Nota Fiscal — NF, NFE, NF-e, NFS-e, NOTA FISCAL</option>
+            <option value="CNPJ_CPF">CNPJ/CPF — documentos no histórico</option>
+            <option value="Competencia">Competência — MM/AAAA ou MÊS/AAAA</option>
+            <option value="Contrato">Contrato — CONTRATO, CTR ou CT</option>
+            <option value="Pedido_OC">Pedido/OC — PEDIDO, PED. ou OC</option>
+            <option value="Parcela">Parcela — PARCELA ou PARC.</option>
+            <option value="Documento">Documento — DOC. ou DOCUMENTO</option>
+          </select>
+          <div class="inline-actions">
+            <button id="selectDefaultExtractionsBtn" class="secondary-btn compact-btn" disabled type="button">Usar extrações padrão</button>
+            <button id="clearExtractionsBtn" class="secondary-btn compact-btn" disabled type="button">Não usar extrações adicionais</button>
+          </div>
+          <small>Opcional. Os campos selecionados entram na Base_Tratada e em abas próprias de resumo. Use Ctrl/Cmd para marcar múltiplos.</small>
+        </label>
+        <label>
+          Extrações personalizadas opcionais
+          <textarea id="customExtractionsInput" disabled placeholder="Uma regra por linha. Ex.:
+Projeto=PROJ(?:ETO)?\s*[:\-]?\s*([A-Z0-9 ._/-]+)
+Centro=CC\s*[:\-]?\s*([0-9.]+)"></textarea>
+          <small>Formato: NomeDoCampo=expressão regular. A primeira captura entre parênteses será exportada. As regras são aplicadas ao histórico normalizado em maiúsculas.</small>
+        </label>
+      </div>
+
+      <div id="reconciliationBlock" class="reconciliation-block hidden">
+        <div class="section-mini-header">
+          <div>
+            <p class="eyebrow">Conciliação</p>
+            <h3>Configuração da chave e tolerância</h3>
+          </div>
+          <small>Use esta opção para identificar grupos que se compensam, diferenças pendentes e linhas sem contraparte.</small>
+        </div>
+        <div class="reconciliation-grid">
+          <label>
+            Chaves de conciliação
+            <select id="reconciliationKeysSelect" multiple disabled></select>
+            <div class="inline-actions">
+              <button id="selectDefaultReconciliationKeysBtn" class="secondary-btn compact-btn" disabled type="button">Usar chave padrão</button>
+              <button id="clearReconciliationKeysBtn" class="secondary-btn compact-btn" disabled type="button">Limpar chaves</button>
+            </div>
+            <small>Ex.: Nota Fiscal + Nome, ou CNPJ/CPF + Período, ou Contrato + Parcela. Use Ctrl/Cmd para múltiplas opções.</small>
+          </label>
+
+          <label>
+            Coluna de origem/lado opcional
+            <select id="sideColumnSelect" disabled></select>
+            <small>Opcional. Use quando a planilha tiver origem como Banco/Contábil, Extrato/Razão, Sistema A/Sistema B etc.</small>
+          </label>
+
+          <label>
+            Tolerância de valor
+            <input id="toleranceInput" type="number" min="0" step="0.01" value="0.01" disabled />
+            <small>Diferenças até este valor são consideradas conciliadas.</small>
+          </label>
+
+          <label class="checkbox-label">
+            <input id="requireOppositeSignsToggle" type="checkbox" checked disabled />
+            Exigir valores de sinais opostos dentro do grupo
+          </label>
+        </div>
       </div>
 
       <div class="button-row">
@@ -96,7 +171,7 @@
 
     <section id="summarySection" class="summary-grid hidden" aria-live="polite">
       <article class="metric card">
-        <span>Comparativo</span>
+        <span>Análise</span>
         <strong id="metricComparison">-</strong>
       </article>
       <article class="metric card">
@@ -112,11 +187,19 @@
         <strong id="metricDuplicates">0</strong>
       </article>
       <article class="metric card">
-        <span>Nomes identificados</span>
+        <span>Nomes / grupos</span>
         <strong id="metricNames">0</strong>
       </article>
       <article class="metric card">
-        <span>Variação total</span>
+        <span>Notas fiscais identificadas</span>
+        <strong id="metricInvoices">0</strong>
+      </article>
+      <article class="metric card">
+        <span>Valores extraídos</span>
+        <strong id="metricExtractions">0</strong>
+      </article>
+      <article class="metric card">
+        <span id="metricResultLabel">Resultado</span>
         <strong id="metricVariation">R$ 0,00</strong>
       </article>
     </section>
@@ -125,7 +208,7 @@
       <div class="section-header">
         <div>
           <p class="eyebrow">Prévia</p>
-          <h2>Top 25 linhas do comparativo</h2>
+          <h2>Top 25 linhas da análise</h2>
         </div>
         <input id="searchInput" class="search-input" placeholder="Filtrar por nome, histórico, categoria ou filtro" />
       </div>
@@ -143,16 +226,22 @@
         <h2>Regras aplicadas</h2>
         <ol>
           <li>Após o upload, o usuário seleciona a aba, a coluna de data e a coluna de histórico.</li>
-          <li>A aplicação lê os anos automaticamente pela coluna de data e compara os dois anos mais recentes encontrados.</li>
+          <li>O usuário escolhe o tipo de análise: comparação ou conciliação.</li>
+          <li>Na comparação, a aplicação lê os anos automaticamente pela coluna de data e compara os dois anos mais recentes encontrados.</li>
           <li>A visualização pode ser mensal, trimestral, semestral ou anual.</li>
           <li>As colunas de filtros adicionais são opcionais e podem ser múltiplas; elas são levadas para a base tratada e para o comparativo.</li>
           <li>Trata AUTONOMO, AUTONOMOS e INSS S/ PF como uma única categoria: AUTONOMO.</li>
           <li>Para AUTONOMO/INSS S/ PF, consolida o nome como AUTONOMOS, exceto provisões com nome explícito no histórico.</li>
-          <li>Extrai NF e fornecedor do padrão REF. NF. 000000000 NOME HIST. ...</li>
+          <li>Extrai o número da nota fiscal do histórico quando houver padrões como NF, N.F., NFE, NF-e, NFS-e ou NOTA FISCAL.</li>
+          <li>Permite selecionar extrações adicionais do histórico, como CNPJ/CPF, competência, contrato, pedido/OC, parcela e documento.</li>
+          <li>Permite criar extrações personalizadas usando regras no formato NomeDoCampo=expressão regular.</li>
+          <li>Extrai fornecedor do padrão REF. NF. 000000000 NOME HIST. ...</li>
           <li>Para retenções de IRRF, ISS, INSS e PCC, procura a NF correspondente para recuperar o nome completo do fornecedor.</li>
           <li>Calcula Valor Líquido = Débito - Crédito, salvo quando uma coluna de valor pronto for selecionada.</li>
           <li>Detecta blocos inteiros repetidos e remove a segunda ocorrência quando o bloco repetido tem pelo menos 20 linhas consecutivas.</li>
-          <li>Exporta as abas: Resumo, Comparativo_Nome, Resumo_Periodo, Resumo_Categoria, Resumo_Filtros, Base_Tratada e Duplicidades.</li>
+          <li>Na conciliação, o usuário escolhe chaves como Nome, Nota Fiscal, Período, Categoria, filtros selecionados e campos extraídos do histórico.</li>
+          <li>Na conciliação, grupos com saldo dentro da tolerância são classificados como Conciliado; grupos com diferença, sem contraparte ou sem sinais opostos são destacados.</li>
+          <li>Exporta abas diferentes conforme o modo: comparação temporal ou conciliação.</li>
         </ol>
         <button class="primary-btn" type="submit">Fechar</button>
       </form>

@@ -1,58 +1,126 @@
-# Comparativo automático por histórico
+# Motor de comparação e conciliação por histórico
 
-Aplicação web estática para analisar planilhas Excel, extrair nomes da coluna de histórico, comparar automaticamente os dois anos mais recentes encontrados na coluna de data e exportar um novo Excel tratado.
+Aplicação web estática para processar planilhas Excel no navegador, extrair informações da coluna de histórico e exportar análises tratadas em Excel.
 
-## Como usar
+## Publicação
 
-1. Abra `index.html` no navegador ou publique a pasta em uma hospedagem estática.
-2. Faça upload do arquivo Excel.
-3. Selecione:
-   - Aba de origem.
-   - Visão do período: mensal, trimestral, semestral ou anual.
-   - Coluna de data.
-   - Coluna de histórico.
-   - Coluna de débito e crédito, ou uma coluna de valor pronto opcional.
-   - Colunas de filtros adicionais opcionais. Pode selecionar mais de uma usando Ctrl/Cmd.
-4. Clique em **Analisar planilha**.
-5. Clique em **Exportar Excel tratado**.
+A aplicação não precisa de backend. Publique os arquivos abaixo na raiz do GitHub Pages, Netlify, Vercel ou qualquer hospedagem estática:
 
-## Regras aplicadas
+- `index.html`
+- `styles.css`
+- `app.js`
+- `.nojekyll`
 
-- Os anos são lidos automaticamente pela coluna de data.
-- A aplicação compara automaticamente os dois anos mais recentes encontrados. Exemplo: se existirem 2026 e 2025, o comparativo será 2026 x 2025.
-- A visão mensal, trimestral, semestral ou anual controla como os períodos são agrupados.
-- `AUTONOMO`, `AUTONOMOS` e `INSS S/ PF` são tratados como uma categoria única: `AUTONOMO`.
-- Para autônomos, a aplicação consolida como `AUTONOMOS`, exceto quando o histórico indicar nome explícito em provisões.
-- Quando existe referência de NF, a aplicação tenta extrair o nome após a NF.
-- Para retenções como IRRF, ISS, INSS e PCC, a aplicação tenta buscar o nome completo usando a NF correspondente.
-- Valor líquido padrão: `Débito - Crédito`.
-- Se uma coluna de valor pronto for selecionada, ela substitui o cálculo `Débito - Crédito`.
-- Blocos duplicados de pelo menos 20 linhas consecutivas são removidos automaticamente, quando a opção estiver marcada.
+A biblioteca SheetJS é carregada via CDN em `index.html`.
 
-## Abas exportadas
+## Fluxo de uso
+
+1. Faça upload de uma planilha `.xlsx`, `.xls`, `.xlsm` ou `.csv`.
+2. Selecione a aba de origem.
+3. Escolha o tipo de análise:
+   - **Comparação**
+   - **Conciliação**
+4. Selecione:
+   - coluna de data;
+   - coluna de histórico;
+   - coluna de débito;
+   - coluna de crédito;
+   - ou coluna de valor pronto, se houver.
+5. Opcionalmente, selecione filtros adicionais.
+6. Opcionalmente, selecione campos a extrair do histórico.
+7. Clique em **Analisar planilha**.
+8. Clique em **Exportar Excel tratado**.
+
+## Modo Comparação
+
+Compara automaticamente os dois anos mais recentes encontrados na coluna de data.
+
+Exemplo: se a base tiver 2026 e 2025, a aplicação gera o comparativo 2026 x 2025.
+
+A visão de período pode ser:
+
+- mensal;
+- trimestral;
+- semestral;
+- anual.
+
+Abas exportadas no modo comparação:
 
 - `Resumo`
 - `Comparativo_Nome`
 - `Resumo_Periodo`
 - `Resumo_Categoria`
 - `Resumo_Filtros`
+- `Resumo_NF`
+- `Resumo_Extracoes`
+- `Extracao_Nome`
 - `Base_Tratada`
 - `Duplicidades`
 
-## Publicação online
+## Modo Conciliação
 
-A aplicação não precisa de backend. Pode ser publicada em:
+Agrupa os lançamentos por uma ou mais chaves e verifica se os valores se compensam dentro de uma tolerância.
 
-- Netlify
-- Vercel
-- GitHub Pages
-- Cloudflare Pages
-- Qualquer hospedagem estática
+Chaves disponíveis:
 
-A aplicação usa SheetJS via CDN:
+- nome extraído;
+- nota fiscal;
+- categoria tratada;
+- ano;
+- período;
+- filtros adicionais selecionados;
+- campos extraídos do histórico.
 
-```html
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+Configurações disponíveis:
+
+- tolerância de valor;
+- coluna opcional de origem/lado, como Banco/Contábil ou Extrato/Razão;
+- opção para exigir sinais opostos dentro do grupo.
+
+Classificações possíveis:
+
+- `Conciliado`
+- `Conciliado - um lado`
+- `Diferença`
+- `Sem contraparte`
+- `Sem sinais opostos`
+
+Abas exportadas no modo conciliação:
+
+- `Resumo`
+- `Conciliacao_Grupos`
+- `Conciliacao_Linhas`
+- `Conciliacao_Pares`
+- `Resumo_NF`
+- `Resumo_Extracoes`
+- `Base_Tratada`
+- `Duplicidades`
+
+## Campos extraídos do histórico
+
+Extrações padrão disponíveis:
+
+- Nota Fiscal
+- CNPJ/CPF
+- Competência
+- Contrato
+- Pedido/OC
+- Parcela
+- Documento
+
+Também é possível criar extrações personalizadas, uma por linha, no formato:
+
+```text
+Projeto=PROJ(?:ETO)?\s*[:\-]?\s*([A-Z0-9 ._/-]+)
+Centro=CC\s*[:\-]?\s*([0-9.]+)
 ```
 
-Por isso, a página publicada precisa ter acesso à internet para carregar essa biblioteca.
+A primeira captura entre parênteses será exportada.
+
+## Regras fixas
+
+- `AUTONOMO`, `AUTONOMOS` e `INSS S/ PF` são tratados como `AUTONOMO`.
+- Valor líquido padrão: `Débito - Crédito`.
+- Quando selecionada uma coluna de valor pronto, ela substitui o cálculo `Débito - Crédito`.
+- A aplicação pode remover blocos duplicados automaticamente.
+- O processamento ocorre localmente no navegador.

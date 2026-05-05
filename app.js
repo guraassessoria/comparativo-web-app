@@ -16,6 +16,7 @@
     fileInput: document.getElementById('fileInput'),
     dropZone: document.getElementById('dropZone'),
     sheetSelect: document.getElementById('sheetSelect'),
+    analysisModeSelect: document.getElementById('analysisModeSelect'),
     periodModeSelect: document.getElementById('periodModeSelect'),
     dateColumnSelect: document.getElementById('dateColumnSelect'),
     historyColumnSelect: document.getElementById('historyColumnSelect'),
@@ -23,7 +24,19 @@
     creditColumnSelect: document.getElementById('creditColumnSelect'),
     valueColumnSelect: document.getElementById('valueColumnSelect'),
     filterColumnsSelect: document.getElementById('filterColumnsSelect'),
+    clearFilterColumnsBtn: document.getElementById('clearFilterColumnsBtn'),
+    extractionFieldsSelect: document.getElementById('extractionFieldsSelect'),
+    customExtractionsInput: document.getElementById('customExtractionsInput'),
+    selectDefaultExtractionsBtn: document.getElementById('selectDefaultExtractionsBtn'),
+    clearExtractionsBtn: document.getElementById('clearExtractionsBtn'),
     removeDuplicatesToggle: document.getElementById('removeDuplicatesToggle'),
+    reconciliationBlock: document.getElementById('reconciliationBlock'),
+    reconciliationKeysSelect: document.getElementById('reconciliationKeysSelect'),
+    selectDefaultReconciliationKeysBtn: document.getElementById('selectDefaultReconciliationKeysBtn'),
+    clearReconciliationKeysBtn: document.getElementById('clearReconciliationKeysBtn'),
+    sideColumnSelect: document.getElementById('sideColumnSelect'),
+    toleranceInput: document.getElementById('toleranceInput'),
+    requireOppositeSignsToggle: document.getElementById('requireOppositeSignsToggle'),
     analyzeBtn: document.getElementById('analyzeBtn'),
     exportBtn: document.getElementById('exportBtn'),
     resetBtn: document.getElementById('resetBtn'),
@@ -40,7 +53,10 @@
     metricUsed: document.getElementById('metricUsed'),
     metricDuplicates: document.getElementById('metricDuplicates'),
     metricNames: document.getElementById('metricNames'),
+    metricInvoices: document.getElementById('metricInvoices'),
+    metricExtractions: document.getElementById('metricExtractions'),
     metricVariation: document.getElementById('metricVariation'),
+    metricResultLabel: document.getElementById('metricResultLabel'),
   };
 
   const DEFAULT_COLUMNS = {
@@ -63,6 +79,16 @@
     'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
     'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
   ];
+
+  const BUILTIN_EXTRACTION_LABELS = {
+    Nota_Fiscal: 'Nota Fiscal',
+    CNPJ_CPF: 'CNPJ/CPF',
+    Competencia: 'Competência',
+    Contrato: 'Contrato',
+    Pedido_OC: 'Pedido/OC',
+    Parcela: 'Parcela',
+    Documento: 'Documento',
+  };
 
   const SERVICE_MARKERS = [
     ' HIST. ',
@@ -329,6 +355,7 @@
 
   function enableMappingControls(enabled) {
     [
+      els.analysisModeSelect,
       els.periodModeSelect,
       els.dateColumnSelect,
       els.historyColumnSelect,
@@ -336,7 +363,19 @@
       els.creditColumnSelect,
       els.valueColumnSelect,
       els.filterColumnsSelect,
-    ].forEach((el) => { el.disabled = !enabled; });
+      els.clearFilterColumnsBtn,
+      els.extractionFieldsSelect,
+      els.customExtractionsInput,
+      els.selectDefaultExtractionsBtn,
+      els.clearExtractionsBtn,
+      els.reconciliationKeysSelect,
+      els.selectDefaultReconciliationKeysBtn,
+      els.clearReconciliationKeysBtn,
+      els.sideColumnSelect,
+      els.toleranceInput,
+      els.requireOppositeSignsToggle,
+    ].filter(Boolean).forEach((el) => { el.disabled = !enabled; });
+    updateAnalysisModeUI();
   }
 
   function loadSheet(sheetName) {
@@ -364,13 +403,17 @@
     addColumnOptions(els.creditColumnSelect, state.columnDefs, true);
     addColumnOptions(els.valueColumnSelect, state.columnDefs, true, 'Não usar: calcular Débito - Crédito');
     addColumnOptions(els.filterColumnsSelect, state.columnDefs);
+    if (els.sideColumnSelect) addColumnOptions(els.sideColumnSelect, state.columnDefs, true, 'Não usar origem/lado');
 
     setSelectValue(els.dateColumnSelect, defaults.data, fallback.data);
     setSelectValue(els.historyColumnSelect, defaults.historico, fallback.historico);
     setSelectValue(els.debitColumnSelect, defaults.debito, fallback.debito);
     setSelectValue(els.creditColumnSelect, defaults.credito, fallback.credito);
     setSelectValue(els.valueColumnSelect, defaults.valor, null);
-    setMultiSelectValues(els.filterColumnsSelect, [fallback.categoria, fallback.centro]);
+    // Filtros adicionais são realmente opcionais: nenhuma coluna é pré-selecionada.
+    setMultiSelectValues(els.filterColumnsSelect, []);
+    if (els.sideColumnSelect) els.sideColumnSelect.value = '';
+    updateReconciliationKeyOptions(true);
 
     enableMappingControls(state.columnDefs.length > 0);
     els.analyzeBtn.disabled = state.columnDefs.length === 0;
@@ -394,6 +437,130 @@
       .filter(Boolean);
   }
 
+  function sanitizeFieldName(name) {
+    const cleaned = normalizeText(name)
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 40);
+    return cleaned || 'CAMPO_EXTRAIDO';
+  }
+
+  function uniqueExtractionKey(base, existing) {
+    let key = base;
+    let count = 2;
+    while (existing.has(key)) {
+      key = `${base}_${count}`;
+      count += 1;
+    }
+    existing.add(key);
+    return key;
+  }
+
+  function parseCustomExtractionDefs() {
+    const text = els.customExtractionsInput.value || '';
+    const defs = [];
+    const used = new Set(Object.keys(BUILTIN_EXTRACTION_LABELS));
+
+    text.split(/\r?\n/).forEach((rawLine, index) => {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) return;
+      const equalsIndex = line.indexOf('=');
+      if (equalsIndex <= 0 || equalsIndex === line.length - 1) {
+        throw new Error(`Regra personalizada inválida na linha ${index + 1}. Use NomeDoCampo=expressão regular.`);
+      }
+      const label = line.slice(0, equalsIndex).trim();
+      const pattern = line.slice(equalsIndex + 1).trim();
+      try {
+        const regex = new RegExp(pattern, 'i');
+        const key = uniqueExtractionKey(sanitizeFieldName(label), used);
+        defs.push({ key, label: normalizeText(label), type: 'custom', regex });
+      } catch (error) {
+        throw new Error(`Expressão regular inválida na regra personalizada ${label}: ${error.message}`);
+      }
+    });
+
+    return defs;
+  }
+
+  function getSelectedExtractionDefs() {
+    const selectedBuiltins = Array.from(els.extractionFieldsSelect.selectedOptions)
+      .map((option) => option.value)
+      .filter((key) => BUILTIN_EXTRACTION_LABELS[key])
+      .map((key) => ({ key, label: BUILTIN_EXTRACTION_LABELS[key], type: 'builtin' }));
+    return [...selectedBuiltins, ...parseCustomExtractionDefs()];
+  }
+
+  function updateAnalysisModeUI() {
+    if (!els.analysisModeSelect || !els.reconciliationBlock) return;
+    const isReconciliation = els.analysisModeSelect.value === 'reconciliation';
+    els.reconciliationBlock.classList.toggle('hidden', !isReconciliation);
+  }
+
+  function reconciliationKeyOptions(filterDefs = null, extractionDefs = null) {
+    const filters = filterDefs || getSelectedFilterDefs();
+    let extractions = [];
+    try {
+      extractions = extractionDefs || getSelectedExtractionDefs();
+    } catch (error) {
+      extractions = [];
+    }
+
+    const options = [
+      { value: 'FIELD::Nome_Extraido', label: 'Nome extraído' },
+      { value: 'FIELD::Nota_Fiscal', label: 'Nota Fiscal' },
+      { value: 'FIELD::Categoria_Tratada', label: 'Categoria tratada' },
+      { value: 'FIELD::Ano', label: 'Ano' },
+      { value: 'FIELD::Periodo', label: 'Período' },
+    ];
+
+    filters.forEach((def) => {
+      options.push({ value: `FILTER::${def.label}`, label: `Filtro: ${def.label}` });
+    });
+
+    extractions.forEach((def) => {
+      if (def.key === 'Nota_Fiscal') return;
+      options.push({ value: `EXT::${def.key}`, label: `Extração: ${def.label}` });
+    });
+
+    return options;
+  }
+
+  function setDefaultReconciliationKeys() {
+    if (!els.reconciliationKeysSelect) return;
+    const available = new Set(Array.from(els.reconciliationKeysSelect.options).map((option) => option.value));
+    const defaults = ['FIELD::Nota_Fiscal', 'FIELD::Nome_Extraido'].filter((value) => available.has(value));
+    Array.from(els.reconciliationKeysSelect.options).forEach((option) => {
+      option.selected = defaults.includes(option.value);
+    });
+  }
+
+  function updateReconciliationKeyOptions(forceDefaults = false) {
+    if (!els.reconciliationKeysSelect) return;
+    const selectedBefore = new Set(Array.from(els.reconciliationKeysSelect.selectedOptions).map((option) => option.value));
+    const options = reconciliationKeyOptions();
+    els.reconciliationKeysSelect.innerHTML = '';
+    options.forEach((entry) => {
+      const option = document.createElement('option');
+      option.value = entry.value;
+      option.textContent = entry.label;
+      option.selected = selectedBefore.has(entry.value);
+      els.reconciliationKeysSelect.appendChild(option);
+    });
+    if (forceDefaults || !Array.from(els.reconciliationKeysSelect.selectedOptions).length) setDefaultReconciliationKeys();
+  }
+
+  function getSelectedReconciliationKeys() {
+    if (!els.reconciliationKeysSelect) return [];
+    const optionMap = new Map(reconciliationKeyOptions().map((entry) => [entry.value, entry.label]));
+    const selected = Array.from(els.reconciliationKeysSelect.selectedOptions)
+      .map((option) => ({ value: option.value, label: optionMap.get(option.value) || option.textContent || option.value }));
+    if (selected.length) return selected;
+    return [
+      { value: 'FIELD::Nota_Fiscal', label: 'Nota Fiscal' },
+      { value: 'FIELD::Nome_Extraido', label: 'Nome extraído' },
+    ];
+  }
+
   function getSelectedMapping() {
     const data = Number(els.dateColumnSelect.value);
     const historico = Number(els.historyColumnSelect.value);
@@ -401,15 +568,38 @@
     const credito = els.creditColumnSelect.value === '' ? null : Number(els.creditColumnSelect.value);
     const valor = els.valueColumnSelect.value === '' ? null : Number(els.valueColumnSelect.value);
     const filterDefs = getSelectedFilterDefs();
+    const extractionDefs = getSelectedExtractionDefs();
     const categoryIndex = state.defaultColumns?.categoria ?? null;
+    const analysisMode = els.analysisModeSelect?.value || 'comparison';
+    const sideColumn = els.sideColumnSelect?.value === '' ? null : Number(els.sideColumnSelect?.value);
+    const tolerance = Math.max(0, parseNumber(els.toleranceInput?.value ?? 0.01));
+    const requireOppositeSigns = Boolean(els.requireOppositeSignsToggle?.checked);
+    const reconciliationKeys = getSelectedReconciliationKeys();
 
     if (!Number.isInteger(data) || data < 0) throw new Error('Selecione uma coluna de data válida.');
     if (!Number.isInteger(historico) || historico < 0) throw new Error('Selecione uma coluna de histórico válida.');
     if (valor === null && debito === null && credito === null) {
       throw new Error('Selecione uma coluna de valor pronto ou pelo menos uma coluna de débito/crédito.');
     }
+    if (analysisMode === 'reconciliation' && !reconciliationKeys.length) {
+      throw new Error('Selecione pelo menos uma chave de conciliação.');
+    }
 
-    return { data, historico, debito, credito, valor, filterDefs, categoryIndex };
+    return {
+      analysisMode,
+      data,
+      historico,
+      debito,
+      credito,
+      valor,
+      filterDefs,
+      extractionDefs,
+      categoryIndex,
+      sideColumn,
+      tolerance,
+      requireOppositeSigns,
+      reconciliationKeys,
+    };
   }
 
   function normalizeCategory(category) {
@@ -425,22 +615,123 @@
     return normalizeCategory(joined);
   }
 
+  function normalizeNFNumber(rawNumber) {
+    const digits = String(rawNumber ?? '').replace(/\D/g, '');
+    if (!digits) return '';
+    const stripped = digits.replace(/^0+/, '');
+    return stripped || '0';
+  }
+
+  function nfPatterns() {
+    return [
+      /\b(?:REF\.?\s*)?(?:NF|N\.F\.|NFE|NF-E|NFSE|NFS-E|NFS)\.?\s*(?:N[ºO°]?\.?|NUM\.?|NUMERO\.?|NO\.?)?\s*[:\-\/]?\s*([0-9][0-9.\-/]{0,18})\b/i,
+      /\bNOTA\s+FISCAL(?:\s+ELETRONICA)?\s*(?:N[ºO°]?\.?|NUM\.?|NUMERO\.?|NO\.?)?\s*[:\-\/]?\s*([0-9][0-9.\-/]{0,18})\b/i,
+      /\bN[ºO°]\.?\s*(?:DA\s+)?(?:NF|N\.F\.|NOTA\s+FISCAL)\s*[:\-\/]?\s*([0-9][0-9.\-/]{0,18})\b/i,
+    ];
+  }
+
   function extractNF(history) {
     const text = normalizeText(history);
-    const match = text.match(/\bNF\.?\s*(?:N[ºO]?\.?\s*)?0*(\d{1,12})\b/i);
-    return match ? String(Number(match[1])) : '';
+    for (const pattern of nfPatterns()) {
+      const match = text.match(pattern);
+      const nf = match ? normalizeNFNumber(match[1]) : '';
+      if (nf) return nf;
+    }
+    return '';
+  }
+
+  function extractDocumentId(history) {
+    const text = normalizeText(history);
+    const cnpj = text.match(/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/);
+    if (cnpj) return cnpj[0].replace(/\D/g, '').replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+    const cpf = text.match(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/);
+    if (cpf) return cpf[0].replace(/\D/g, '').replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+    return '';
+  }
+
+  function extractCompetencia(history) {
+    const text = normalizeText(history);
+    const numeric = text.match(/\b(?:COMP(?:ETENCIA)?|REF(?:ERENCIA)?|MES)\.?:?\s*(0?[1-9]|1[0-2])\s*[\/-]\s*(20\d{2}|\d{2})\b/i)
+      || text.match(/\b(0?[1-9]|1[0-2])\s*[\/-]\s*(20\d{2})\b/i);
+    if (numeric) {
+      const month = String(Number(numeric[1])).padStart(2, '0');
+      let year = String(numeric[2]);
+      if (year.length === 2) year = `20${year}`;
+      return `${month}/${year}`;
+    }
+
+    const monthMap = {
+      JANEIRO: '01', FEVEREIRO: '02', MARCO: '03', MARÇO: '03', ABRIL: '04', MAIO: '05', JUNHO: '06',
+      JULHO: '07', AGOSTO: '08', SETEMBRO: '09', OUTUBRO: '10', NOVEMBRO: '11', DEZEMBRO: '12',
+    };
+    const words = Object.keys(monthMap).join('|');
+    const wordMatch = text.match(new RegExp(`\b(${words})\s*(?:DE\s*)?(20\d{2})\b`, 'i'));
+    if (wordMatch) return `${monthMap[normalizeText(wordMatch[1])]}/${wordMatch[2]}`;
+    return '';
+  }
+
+  function extractGenericCode(history, labels, maxLen = 30) {
+    const text = normalizeText(history);
+    const labelPattern = labels.join('|');
+    const pattern = new RegExp(`\b(?:${labelPattern})\.?\s*(?:N[ºO°]?\.?|NUM(?:ERO)?\.?|NO\.?|:|-)?\s*([A-Z0-9][A-Z0-9._\/-]{0,${maxLen - 1}})`, 'i');
+    const match = text.match(pattern);
+    return match ? match[1].replace(/[.,;:]+$/g, '') : '';
+  }
+
+  function runExtractionDef(history, def) {
+    const text = normalizeText(history);
+    if (def.type === 'custom') {
+      const match = text.match(def.regex);
+      return match ? normalizeText(match[1] || match[0]) : '';
+    }
+    if (def.key === 'Nota_Fiscal') return extractNF(text);
+    if (def.key === 'CNPJ_CPF') return extractDocumentId(text);
+    if (def.key === 'Competencia') return extractCompetencia(text);
+    if (def.key === 'Contrato') return extractGenericCode(text, ['CONTRATO', 'CONTR', 'CTR', 'CT']);
+    if (def.key === 'Pedido_OC') return extractGenericCode(text, ['PEDIDO', 'PED', 'OC', 'ORDEM\s+DE\s+COMPRA']);
+    if (def.key === 'Parcela') return extractGenericCode(text, ['PARCELA', 'PARC', 'PCL']);
+    if (def.key === 'Documento') return extractGenericCode(text, ['DOCUMENTO', 'DOC']);
+    return '';
+  }
+
+  function runExtractions(history, extractionDefs) {
+    const out = {};
+    (extractionDefs || []).forEach((def) => {
+      out[def.key] = runExtractionDef(history, def);
+    });
+    return out;
+  }
+
+  function countExtractedValues(items, extractionDefs) {
+    const unique = new Set();
+    (items || []).forEach((item) => {
+      (extractionDefs || []).forEach((def) => {
+        const value = item.extracoes?.[def.key];
+        if (value) unique.add(`${def.key}|${value}`);
+      });
+    });
+    return unique.size;
   }
 
   function extractNameAfterNF(history) {
     const original = normalizeText(history);
-    const match = original.match(/\bNF\.?\s*(?:N[ºO]?\.?\s*)?0*\d{1,12}\s*[-–—:]?\s*(.+)$/i);
-    if (!match) return '';
-    return cleanName(match[1]);
+    const patterns = [
+      /\b(?:REF\.?\s*)?(?:NF|N\.F\.|NFE|NF-E|NFSE|NFS-E|NFS)\.?\s*(?:N[ºO°]?\.?|NUM\.?|NUMERO\.?|NO\.?)?\s*[:\-\/]?\s*[0-9][0-9.\-/]{0,18}\s*[-–—:]?\s*(.+)$/i,
+      /\bNOTA\s+FISCAL(?:\s+ELETRONICA)?\s*(?:N[ºO°]?\.?|NUM\.?|NUMERO\.?|NO\.?)?\s*[:\-\/]?\s*[0-9][0-9.\-/]{0,18}\s*[-–—:]?\s*(.+)$/i,
+      /\bN[ºO°]\.?\s*(?:DA\s+)?(?:NF|N\.F\.|NOTA\s+FISCAL)\s*[:\-\/]?\s*[0-9][0-9.\-/]{0,18}\s*[-–—:]?\s*(.+)$/i,
+    ];
+    for (const pattern of patterns) {
+      const match = original.match(pattern);
+      if (match) return cleanName(match[1]);
+    }
+    return '';
   }
 
   function extractNameFromRefNF(history) {
     const text = normalizeText(history);
-    const isRefNF = /\bREF\.?\s+NF\.?\b/i.test(text) || /^NF\.?\s*0*\d+/i.test(text);
+    const isRefNF = /\bREF\.?\s+(?:NF|N\.F\.|NFE|NF-E|NFSE|NFS-E|NFS|NOTA\s+FISCAL)\b/i.test(text)
+      || /^(?:NF|N\.F\.|NFE|NF-E|NFSE|NFS-E|NFS)\.?\s*(?:N[ºO°]?\.?\s*)?[0-9]/i.test(text)
+      || /^NOTA\s+FISCAL/i.test(text);
     if (!isRefNF) return '';
 
     const afterNF = extractNameAfterNF(text);
@@ -563,6 +854,7 @@
     const debito = mapping.debito === null ? 0 : parseNumber(row[mapping.debito]);
     const credito = mapping.credito === null ? 0 : parseNumber(row[mapping.credito]);
     const valorLiquido = mapping.valor === null ? debito - credito : parseNumber(row[mapping.valor]);
+    const origemLado = Number.isInteger(mapping.sideColumn) && mapping.sideColumn >= 0 ? normalizeText(row[mapping.sideColumn]) : '';
     const period = periodMeta(date, periodMode);
 
     return {
@@ -576,11 +868,13 @@
       periodoOrdem: period.order,
       categoriaTratada,
       filterValues,
+      origemLado,
       historico,
       debito,
       credito,
       valorLiquido,
       nf: '',
+      extracoes: {},
       nomeExtraido: '',
       metodoExtracao: '',
       excluidaDuplicidade: false,
@@ -604,6 +898,10 @@
     preliminary.forEach((item) => {
       const extracted = inferNameAndMethod(item, nfMaps);
       item.nf = extracted.nf;
+      item.extracoes = runExtractions(item.historico, mapping.extractionDefs);
+      if (Object.prototype.hasOwnProperty.call(item.extracoes, 'Nota_Fiscal') && !item.extracoes.Nota_Fiscal) {
+        item.extracoes.Nota_Fiscal = item.nf;
+      }
       item.nomeExtraido = extracted.name;
       item.metodoExtracao = extracted.method;
     });
@@ -824,6 +1122,61 @@
     }).sort((a, b) => sortComparisonRows(a, b, currentYear));
   }
 
+  function groupByNF(items, currentYear, previousYear, filterDefs) {
+    const map = new Map();
+    items.forEach((item) => {
+      if (item.ano !== currentYear && item.ano !== previousYear) return;
+      if (!item.nf) return;
+      const key = `${item.periodoChave}|${item.nf}|${item.nomeExtraido || 'NAO IDENTIFICADO'}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          Periodo_Ordem: item.periodoOrdem,
+          Periodo: item.periodo,
+          Nota_Fiscal: item.nf,
+          Nome_Extraido: item.nomeExtraido || 'NAO IDENTIFICADO',
+          Categorias: new Set(),
+          Filtros: {},
+          [`Qtde_${previousYear}`]: 0,
+          [`Qtde_${currentYear}`]: 0,
+          [`Valor_${previousYear}`]: 0,
+          [`Valor_${currentYear}`]: 0,
+        });
+      }
+      const row = map.get(key);
+      if (item.categoriaTratada) row.Categorias.add(item.categoriaTratada);
+      addDistinctValues(row.Filtros, item.filterValues);
+      row[`Qtde_${item.ano}`] += 1;
+      row[`Valor_${item.ano}`] += item.valorLiquido;
+    });
+
+    return [...map.values()].map((row) => {
+      const variacao = row[`Valor_${currentYear}`] - row[`Valor_${previousYear}`];
+      const filterColumns = serializeFilterSets(row.Filtros);
+      const output = {
+        Periodo_Ordem: row.Periodo_Ordem,
+        Periodo: row.Periodo,
+        Nota_Fiscal: row.Nota_Fiscal,
+        Nome_Extraido: row.Nome_Extraido,
+        Categoria_Tratada: [...row.Categorias].sort().join(', '),
+      };
+      filterDefs.forEach((def) => { output[def.label] = filterColumns[def.label] || ''; });
+      return {
+        ...output,
+        [`Qtde_${previousYear}`]: row[`Qtde_${previousYear}`],
+        [`Qtde_${currentYear}`]: row[`Qtde_${currentYear}`],
+        [`Valor_${previousYear}`]: round2(row[`Valor_${previousYear}`]),
+        [`Valor_${currentYear}`]: round2(row[`Valor_${currentYear}`]),
+        'Variacao_R$': round2(variacao),
+        'Variacao_%': row[`Valor_${previousYear}`] !== 0 ? variacao / row[`Valor_${previousYear}`] : null,
+      };
+    }).sort((a, b) => {
+      if ((a.Periodo_Ordem || 0) !== (b.Periodo_Ordem || 0)) return (a.Periodo_Ordem || 0) - (b.Periodo_Ordem || 0);
+      const nfCompare = String(a.Nota_Fiscal || '').localeCompare(String(b.Nota_Fiscal || ''), 'pt-BR', { numeric: true });
+      if (nfCompare !== 0) return nfCompare;
+      return String(a.Nome_Extraido || '').localeCompare(String(b.Nome_Extraido || ''), 'pt-BR');
+    });
+  }
+
   function groupByFilters(items, currentYear, previousYear, filterDefs) {
     const map = new Map();
     filterDefs.forEach((def) => {
@@ -865,6 +1218,382 @@
     });
   }
 
+  function groupByExtractions(items, currentYear, previousYear, extractionDefs) {
+    const map = new Map();
+    (extractionDefs || []).forEach((def) => {
+      items.forEach((item) => {
+        if (item.ano !== currentYear && item.ano !== previousYear) return;
+        const value = item.extracoes?.[def.key];
+        if (!value) return;
+        const key = `${def.key}|${value}|${item.periodoChave}`;
+        if (!map.has(key)) {
+          map.set(key, {
+            Campo_Extraido: def.label,
+            Valor_Extraido: value,
+            Periodo_Ordem: item.periodoOrdem,
+            Periodo: item.periodo,
+            [`Qtde_${previousYear}`]: 0,
+            [`Qtde_${currentYear}`]: 0,
+            [`Valor_${previousYear}`]: 0,
+            [`Valor_${currentYear}`]: 0,
+          });
+        }
+        const row = map.get(key);
+        row[`Qtde_${item.ano}`] += 1;
+        row[`Valor_${item.ano}`] += item.valorLiquido;
+      });
+    });
+
+    return [...map.values()].map((row) => {
+      const variacao = row[`Valor_${currentYear}`] - row[`Valor_${previousYear}`];
+      return {
+        ...row,
+        [`Valor_${previousYear}`]: round2(row[`Valor_${previousYear}`]),
+        [`Valor_${currentYear}`]: round2(row[`Valor_${currentYear}`]),
+        'Variacao_R$': round2(variacao),
+        'Variacao_%': row[`Valor_${previousYear}`] !== 0 ? variacao / row[`Valor_${previousYear}`] : null,
+      };
+    }).sort((a, b) => {
+      if (a.Campo_Extraido !== b.Campo_Extraido) return a.Campo_Extraido.localeCompare(b.Campo_Extraido);
+      if ((a.Periodo_Ordem || 0) !== (b.Periodo_Ordem || 0)) return (a.Periodo_Ordem || 0) - (b.Periodo_Ordem || 0);
+      return Math.abs(b[`Valor_${currentYear}`] || 0) - Math.abs(a[`Valor_${currentYear}`] || 0);
+    });
+  }
+
+  function groupByExtractionAndName(items, currentYear, previousYear, extractionDefs) {
+    const map = new Map();
+    (extractionDefs || []).forEach((def) => {
+      items.forEach((item) => {
+        if (item.ano !== currentYear && item.ano !== previousYear) return;
+        const value = item.extracoes?.[def.key];
+        if (!value) return;
+        const name = item.nomeExtraido || 'NAO IDENTIFICADO';
+        const key = `${def.key}|${value}|${item.periodoChave}|${name}`;
+        if (!map.has(key)) {
+          map.set(key, {
+            Campo_Extraido: def.label,
+            Valor_Extraido: value,
+            Periodo_Ordem: item.periodoOrdem,
+            Periodo: item.periodo,
+            Nome_Extraido: name,
+            [`Qtde_${previousYear}`]: 0,
+            [`Qtde_${currentYear}`]: 0,
+            [`Valor_${previousYear}`]: 0,
+            [`Valor_${currentYear}`]: 0,
+          });
+        }
+        const row = map.get(key);
+        row[`Qtde_${item.ano}`] += 1;
+        row[`Valor_${item.ano}`] += item.valorLiquido;
+      });
+    });
+
+    return [...map.values()].map((row) => {
+      const variacao = row[`Valor_${currentYear}`] - row[`Valor_${previousYear}`];
+      return {
+        ...row,
+        [`Valor_${previousYear}`]: round2(row[`Valor_${previousYear}`]),
+        [`Valor_${currentYear}`]: round2(row[`Valor_${currentYear}`]),
+        'Variacao_R$': round2(variacao),
+        'Variacao_%': row[`Valor_${previousYear}`] !== 0 ? variacao / row[`Valor_${previousYear}`] : null,
+      };
+    }).sort((a, b) => {
+      if (a.Campo_Extraido !== b.Campo_Extraido) return a.Campo_Extraido.localeCompare(b.Campo_Extraido);
+      if ((a.Periodo_Ordem || 0) !== (b.Periodo_Ordem || 0)) return (a.Periodo_Ordem || 0) - (b.Periodo_Ordem || 0);
+      const byValue = String(a.Valor_Extraido || '').localeCompare(String(b.Valor_Extraido || ''), 'pt-BR', { numeric: true });
+      if (byValue !== 0) return byValue;
+      return Math.abs(b[`Valor_${currentYear}`] || 0) - Math.abs(a[`Valor_${currentYear}`] || 0);
+    });
+  }
+
+  function reconciliationKeyCell(item, keyDef) {
+    const [kind, rawKey] = String(keyDef.value || '').split('::');
+    if (kind === 'FIELD') {
+      if (rawKey === 'Nome_Extraido') return item.nomeExtraido || 'NAO IDENTIFICADO';
+      if (rawKey === 'Nota_Fiscal') return item.nf || item.extracoes?.Nota_Fiscal || 'SEM NF';
+      if (rawKey === 'Categoria_Tratada') return item.categoriaTratada || 'SEM CATEGORIA';
+      if (rawKey === 'Ano') return item.ano || 'SEM ANO';
+      if (rawKey === 'Periodo') return item.periodo || 'SEM PERIODO';
+    }
+    if (kind === 'FILTER') return item.filterValues?.[rawKey] || 'VAZIO';
+    if (kind === 'EXT') return item.extracoes?.[rawKey] || 'VAZIO';
+    return 'VAZIO';
+  }
+
+  function reconciliationKeyObject(item, keyDefs) {
+    const out = {};
+    (keyDefs || []).forEach((keyDef) => {
+      out[keyDef.label] = reconciliationKeyCell(item, keyDef);
+    });
+    return out;
+  }
+
+  function reconciliationKeySignature(item, keyDefs) {
+    return (keyDefs || [])
+      .map((keyDef) => `${keyDef.label}=${normalizeText(reconciliationKeyCell(item, keyDef))}`)
+      .join('¦') || `Linha=${item.linhaOriginal}`;
+  }
+
+  function classifyReconciliationGroup(count, saldo, positiveTotal, negativeTotal, tolerance, requireOppositeSigns, sideCount) {
+    if (count <= 1) return 'Sem contraparte';
+    if (requireOppositeSigns && (Math.abs(positiveTotal) <= tolerance || Math.abs(negativeTotal) <= tolerance)) return 'Sem sinais opostos';
+    if (Math.abs(saldo) <= tolerance) return sideCount === 1 ? 'Conciliado - um lado' : 'Conciliado';
+    return 'Diferença';
+  }
+
+  function buildReconciliationGroups(items, mapping) {
+    const keyDefs = mapping.reconciliationKeys || [];
+    const groups = new Map();
+
+    items.forEach((item) => {
+      const signature = reconciliationKeySignature(item, keyDefs);
+      if (!groups.has(signature)) {
+        groups.set(signature, {
+          _signature: signature,
+          _keys: reconciliationKeyObject(item, keyDefs),
+          _linhas: [],
+          _origens: new Set(),
+          Qtde_Linhas: 0,
+          Qtde_Debitos: 0,
+          Qtde_Creditos: 0,
+          Total_Debitos: 0,
+          Total_Creditos: 0,
+          Valor_Positivo: 0,
+          Valor_Negativo: 0,
+          Saldo: 0,
+          Primeiro_Lancamento: '',
+          Ultimo_Lancamento: '',
+        });
+      }
+      const group = groups.get(signature);
+      group._linhas.push(item);
+      if (item.origemLado) group._origens.add(item.origemLado);
+      group.Qtde_Linhas += 1;
+      group.Total_Debitos += item.debito || 0;
+      group.Total_Creditos += item.credito || 0;
+      if ((item.valorLiquido || 0) > 0) {
+        group.Qtde_Debitos += 1;
+        group.Valor_Positivo += item.valorLiquido || 0;
+      } else if ((item.valorLiquido || 0) < 0) {
+        group.Qtde_Creditos += 1;
+        group.Valor_Negativo += item.valorLiquido || 0;
+      }
+      group.Saldo += item.valorLiquido || 0;
+      const iso = item.dataISO || '';
+      if (iso) {
+        if (!group.Primeiro_Lancamento || iso < group.Primeiro_Lancamento) group.Primeiro_Lancamento = iso;
+        if (!group.Ultimo_Lancamento || iso > group.Ultimo_Lancamento) group.Ultimo_Lancamento = iso;
+      }
+    });
+
+    return [...groups.values()].map((group) => {
+      const status = classifyReconciliationGroup(
+        group.Qtde_Linhas,
+        group.Saldo,
+        group.Valor_Positivo,
+        group.Valor_Negativo,
+        mapping.tolerance,
+        mapping.requireOppositeSigns,
+        group._origens.size,
+      );
+      return {
+        Chave_Conciliacao: group._signature,
+        ...group._keys,
+        Status_Conciliacao: status,
+        Qtde_Linhas: group.Qtde_Linhas,
+        Qtde_Debitos: group.Qtde_Debitos,
+        Qtde_Creditos: group.Qtde_Creditos,
+        Qtde_Origens: group._origens.size || '',
+        Origens_Lados: [...group._origens].sort().join(', '),
+        Total_Debitos: round2(group.Total_Debitos),
+        Total_Creditos: round2(group.Total_Creditos),
+        Valor_Positivo: round2(group.Valor_Positivo),
+        Valor_Negativo: round2(group.Valor_Negativo),
+        Saldo: round2(group.Saldo),
+        Diferenca_Absoluta: round2(Math.abs(group.Saldo)),
+        Primeiro_Lancamento: group.Primeiro_Lancamento,
+        Ultimo_Lancamento: group.Ultimo_Lancamento,
+        _linhas: group._linhas,
+      };
+    }).sort((a, b) => {
+      const statusOrder = { 'Diferença': 1, 'Sem contraparte': 2, 'Sem sinais opostos': 3, 'Conciliado - um lado': 4, Conciliado: 5 };
+      const byStatus = (statusOrder[a.Status_Conciliacao] || 99) - (statusOrder[b.Status_Conciliacao] || 99);
+      if (byStatus !== 0) return byStatus;
+      return Math.abs(b.Saldo || 0) - Math.abs(a.Saldo || 0);
+    });
+  }
+
+  function buildReconciliationLines(groups) {
+    const rows = [];
+    groups.forEach((group) => {
+      group._linhas.forEach((item) => {
+        rows.push({
+          Chave_Conciliacao: group.Chave_Conciliacao,
+          Status_Conciliacao: group.Status_Conciliacao,
+          Saldo_Grupo: group.Saldo,
+          Linha_Original: item.linhaOriginal,
+          Data: formatDateBR(item.data),
+          Ano: item.ano,
+          Periodo: item.periodo,
+          Origem_Lado: item.origemLado || '',
+          Categoria_Tratada: item.categoriaTratada,
+          Nome_Extraido: item.nomeExtraido,
+          Nota_Fiscal: item.nf,
+          Historico: item.historico,
+          Debito: round2(item.debito),
+          Credito: round2(item.credito),
+          Valor_Liquido: round2(item.valorLiquido),
+          Metodo_Extracao: item.metodoExtracao,
+        });
+      });
+    });
+    return rows;
+  }
+
+  function buildReconciliationPairs(groups, tolerance) {
+    const rows = [];
+    groups.forEach((group) => {
+      const positives = group._linhas
+        .filter((item) => (item.valorLiquido || 0) > tolerance)
+        .sort((a, b) => Math.abs(b.valorLiquido) - Math.abs(a.valorLiquido));
+      const negatives = group._linhas
+        .filter((item) => (item.valorLiquido || 0) < -tolerance)
+        .sort((a, b) => Math.abs(b.valorLiquido) - Math.abs(a.valorLiquido));
+      const usedNegatives = new Set();
+      const usedPositives = new Set();
+
+      positives.forEach((pos, posIndex) => {
+        let bestIndex = -1;
+        let bestDiff = Infinity;
+        negatives.forEach((neg, negIndex) => {
+          if (usedNegatives.has(negIndex)) return;
+          const diff = Math.abs((pos.valorLiquido || 0) + (neg.valorLiquido || 0));
+          if (diff <= tolerance && diff < bestDiff) {
+            bestIndex = negIndex;
+            bestDiff = diff;
+          }
+        });
+        if (bestIndex >= 0) {
+          const neg = negatives[bestIndex];
+          usedNegatives.add(bestIndex);
+          usedPositives.add(posIndex);
+          rows.push({
+            Chave_Conciliacao: group.Chave_Conciliacao,
+            Status_Par: 'Par conciliado',
+            Linha_Positiva: pos.linhaOriginal,
+            Data_Positiva: formatDateBR(pos.data),
+            Valor_Positivo: round2(pos.valorLiquido),
+            Historico_Positivo: pos.historico,
+            Linha_Negativa: neg.linhaOriginal,
+            Data_Negativa: formatDateBR(neg.data),
+            Valor_Negativo: round2(neg.valorLiquido),
+            Historico_Negativo: neg.historico,
+            Diferenca: round2((pos.valorLiquido || 0) + (neg.valorLiquido || 0)),
+          });
+        }
+      });
+
+      positives.forEach((pos, posIndex) => {
+        if (usedPositives.has(posIndex)) return;
+        rows.push({
+          Chave_Conciliacao: group.Chave_Conciliacao,
+          Status_Par: 'Positivo sem par',
+          Linha_Positiva: pos.linhaOriginal,
+          Data_Positiva: formatDateBR(pos.data),
+          Valor_Positivo: round2(pos.valorLiquido),
+          Historico_Positivo: pos.historico,
+          Linha_Negativa: '',
+          Data_Negativa: '',
+          Valor_Negativo: '',
+          Historico_Negativo: '',
+          Diferenca: round2(pos.valorLiquido),
+        });
+      });
+
+      negatives.forEach((neg, negIndex) => {
+        if (usedNegatives.has(negIndex)) return;
+        rows.push({
+          Chave_Conciliacao: group.Chave_Conciliacao,
+          Status_Par: 'Negativo sem par',
+          Linha_Positiva: '',
+          Data_Positiva: '',
+          Valor_Positivo: '',
+          Historico_Positivo: '',
+          Linha_Negativa: neg.linhaOriginal,
+          Data_Negativa: formatDateBR(neg.data),
+          Valor_Negativo: round2(neg.valorLiquido),
+          Historico_Negativo: neg.historico,
+          Diferenca: round2(neg.valorLiquido),
+        });
+      });
+    });
+    return rows;
+  }
+
+  function groupAllByNF(items) {
+    const map = new Map();
+    items.forEach((item) => {
+      if (!item.nf) return;
+      const key = `${item.nf}|${item.nomeExtraido || 'NAO IDENTIFICADO'}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          Nota_Fiscal: item.nf,
+          Nome_Extraido: item.nomeExtraido || 'NAO IDENTIFICADO',
+          Qtde_Linhas: 0,
+          Valor_Positivo: 0,
+          Valor_Negativo: 0,
+          Saldo: 0,
+        });
+      }
+      const row = map.get(key);
+      row.Qtde_Linhas += 1;
+      if ((item.valorLiquido || 0) > 0) row.Valor_Positivo += item.valorLiquido || 0;
+      if ((item.valorLiquido || 0) < 0) row.Valor_Negativo += item.valorLiquido || 0;
+      row.Saldo += item.valorLiquido || 0;
+    });
+    return [...map.values()].map((row) => ({
+      ...row,
+      Valor_Positivo: round2(row.Valor_Positivo),
+      Valor_Negativo: round2(row.Valor_Negativo),
+      Saldo: round2(row.Saldo),
+    })).sort((a, b) => Math.abs(b.Saldo || 0) - Math.abs(a.Saldo || 0));
+  }
+
+  function groupAllByExtractions(items, extractionDefs) {
+    const map = new Map();
+    (extractionDefs || []).forEach((def) => {
+      items.forEach((item) => {
+        const value = item.extracoes?.[def.key];
+        if (!value) return;
+        const key = `${def.key}|${value}`;
+        if (!map.has(key)) {
+          map.set(key, {
+            Campo_Extraido: def.label,
+            Valor_Extraido: value,
+            Qtde_Linhas: 0,
+            Valor_Positivo: 0,
+            Valor_Negativo: 0,
+            Saldo: 0,
+          });
+        }
+        const row = map.get(key);
+        row.Qtde_Linhas += 1;
+        if ((item.valorLiquido || 0) > 0) row.Valor_Positivo += item.valorLiquido || 0;
+        if ((item.valorLiquido || 0) < 0) row.Valor_Negativo += item.valorLiquido || 0;
+        row.Saldo += item.valorLiquido || 0;
+      });
+    });
+    return [...map.values()].map((row) => ({
+      ...row,
+      Valor_Positivo: round2(row.Valor_Positivo),
+      Valor_Negativo: round2(row.Valor_Negativo),
+      Saldo: round2(row.Saldo),
+    })).sort((a, b) => {
+      if (a.Campo_Extraido !== b.Campo_Extraido) return a.Campo_Extraido.localeCompare(b.Campo_Extraido);
+      return Math.abs(b.Saldo || 0) - Math.abs(a.Saldo || 0);
+    });
+  }
+
   function analyze() {
     const mapping = getSelectedMapping();
     const periodMode = els.periodModeSelect.value;
@@ -872,12 +1601,6 @@
     if (!baseItems.length) throw new Error('Nenhuma linha válida encontrada na planilha. Confira as colunas selecionadas.');
 
     const years = getAvailableYears(baseItems);
-    if (years.length < 2) {
-      throw new Error('A coluna de data selecionada não contém pelo menos dois anos diferentes para comparar.');
-    }
-
-    const currentYear = years[0];
-    const previousYear = years[1];
     const items = baseItems.map((item) => ({ ...item, excluidaDuplicidade: false }));
     let duplicateBlocks = [];
     let removed = new Set();
@@ -890,15 +1613,75 @@
     }
 
     const usedItems = items.filter((item) => !item.excluidaDuplicidade);
+    state.baseItems = baseItems;
+
+    if (mapping.analysisMode === 'reconciliation') {
+      const reconciliationGroupsRaw = buildReconciliationGroups(usedItems, mapping);
+      const reconciliationGroups = reconciliationGroupsRaw.map((group) => {
+        const clean = { ...group };
+        delete clean._linhas;
+        return clean;
+      });
+      const reconciliationLines = buildReconciliationLines(reconciliationGroupsRaw);
+      const reconciliationPairs = buildReconciliationPairs(reconciliationGroupsRaw, mapping.tolerance);
+      const nfSummaryAll = groupAllByNF(usedItems);
+      const extractionSummaryAll = groupAllByExtractions(usedItems, mapping.extractionDefs);
+      const totalSaldo = usedItems.reduce((acc, item) => acc + item.valorLiquido, 0);
+      const divergentGroups = reconciliationGroups.filter((row) => row.Status_Conciliacao !== 'Conciliado' && row.Status_Conciliacao !== 'Conciliado - um lado');
+      const reconciledGroups = reconciliationGroups.length - divergentGroups.length;
+      const saldoDivergente = divergentGroups.reduce((acc, row) => acc + Math.abs(row.Saldo || 0), 0);
+
+      state.analysis = {
+        mode: 'reconciliation',
+        detectedYears: years,
+        periodMode,
+        periodLabel: PERIOD_LABELS[periodMode] || periodMode,
+        mapping,
+        allItems: items,
+        usedItems,
+        reconciliationGroups,
+        reconciliationLines,
+        reconciliationPairs,
+        nfSummaryAll,
+        extractionSummaryAll,
+        duplicateBlocks,
+        totals: {
+          originalRows: baseItems.length,
+          usedRows: usedItems.length,
+          duplicatesRemoved: removed.size,
+          names: new Set(usedItems.map((item) => item.nomeExtraido).filter(Boolean)).size,
+          invoices: new Set(usedItems.map((item) => item.nf).filter(Boolean)).size,
+          extractedValues: countExtractedValues(usedItems, mapping.extractionDefs),
+          groups: reconciliationGroups.length,
+          reconciledGroups,
+          divergentGroups: divergentGroups.length,
+          saldo: round2(totalSaldo),
+          saldoDivergente: round2(saldoDivergente),
+        },
+      };
+
+      renderAnalysis();
+      return;
+    }
+
+    if (years.length < 2) {
+      throw new Error('A coluna de data selecionada não contém pelo menos dois anos diferentes para comparar. Para bases de um único ano, use o modo Conciliação.');
+    }
+
+    const currentYear = years[0];
+    const previousYear = years[1];
     const comparison = groupByName(usedItems, currentYear, previousYear, mapping.filterDefs);
     const periodSummary = groupByPeriod(usedItems, currentYear, previousYear);
     const categorySummary = groupByCategory(usedItems, currentYear, previousYear);
     const filterSummary = groupByFilters(usedItems, currentYear, previousYear, mapping.filterDefs);
+    const nfSummary = groupByNF(usedItems, currentYear, previousYear, mapping.filterDefs);
+    const extractionSummary = groupByExtractions(usedItems, currentYear, previousYear, mapping.extractionDefs);
+    const extractionNameSummary = groupByExtractionAndName(usedItems, currentYear, previousYear, mapping.extractionDefs);
     const totalCurrent = usedItems.filter((item) => item.ano === currentYear).reduce((acc, item) => acc + item.valorLiquido, 0);
     const totalPrevious = usedItems.filter((item) => item.ano === previousYear).reduce((acc, item) => acc + item.valorLiquido, 0);
 
-    state.baseItems = baseItems;
     state.analysis = {
+      mode: 'comparison',
       currentYear,
       previousYear,
       detectedYears: years,
@@ -911,12 +1694,17 @@
       periodSummary,
       categorySummary,
       filterSummary,
+      nfSummary,
+      extractionSummary,
+      extractionNameSummary,
       duplicateBlocks,
       totals: {
         originalRows: baseItems.length,
         usedRows: usedItems.length,
         duplicatesRemoved: removed.size,
         names: new Set(comparison.map((row) => row.Nome_Extraido)).size,
+        invoices: new Set(usedItems.map((item) => item.nf).filter(Boolean)).size,
+        extractedValues: countExtractedValues(usedItems, mapping.extractionDefs),
         current: round2(totalCurrent),
         previous: round2(totalPrevious),
         variation: round2(totalCurrent - totalPrevious),
@@ -930,11 +1718,43 @@
     const analysis = state.analysis;
     if (!analysis) return;
 
+    if (analysis.mode === 'reconciliation') {
+      els.metricComparison.textContent = 'Conciliação';
+      els.metricPeriodMode.textContent = analysis.periodLabel;
+      els.metricUsed.textContent = formatNumber(analysis.totals.usedRows);
+      els.metricDuplicates.textContent = formatNumber(analysis.totals.duplicatesRemoved);
+      els.metricNames.textContent = formatNumber(analysis.totals.groups);
+      if (els.metricInvoices) els.metricInvoices.textContent = formatNumber(analysis.totals.invoices);
+      if (els.metricExtractions) els.metricExtractions.textContent = formatNumber(analysis.totals.extractedValues);
+      if (els.metricResultLabel) els.metricResultLabel.textContent = 'Saldo divergente';
+      els.metricVariation.textContent = formatMoney(analysis.totals.saldoDivergente);
+
+      els.summarySection.classList.remove('hidden');
+      els.previewSection.classList.remove('hidden');
+      els.exportBtn.disabled = false;
+      els.resetBtn.disabled = false;
+      els.filterControls.classList.add('hidden');
+      els.filterControls.innerHTML = '';
+      renderPreviewTable();
+
+      const duplicateText = analysis.totals.duplicatesRemoved
+        ? `${formatNumber(analysis.totals.duplicatesRemoved)} linhas removidas por duplicidade de bloco.`
+        : 'Nenhum bloco duplicado removido.';
+      setStatus(
+        `Conciliação concluída. ${formatNumber(analysis.totals.reconciledGroups)} grupos conciliados e ${formatNumber(analysis.totals.divergentGroups)} grupos pendentes. ${duplicateText}`,
+        'success',
+      );
+      return;
+    }
+
     els.metricComparison.textContent = `${analysis.currentYear} x ${analysis.previousYear}`;
     els.metricPeriodMode.textContent = analysis.periodLabel;
     els.metricUsed.textContent = formatNumber(analysis.totals.usedRows);
     els.metricDuplicates.textContent = formatNumber(analysis.totals.duplicatesRemoved);
     els.metricNames.textContent = formatNumber(analysis.totals.names);
+    if (els.metricInvoices) els.metricInvoices.textContent = formatNumber(analysis.totals.invoices);
+    if (els.metricExtractions) els.metricExtractions.textContent = formatNumber(analysis.totals.extractedValues);
+    if (els.metricResultLabel) els.metricResultLabel.textContent = 'Variação total';
     els.metricVariation.textContent = formatMoney(analysis.totals.variation);
 
     els.summarySection.classList.remove('hidden');
@@ -997,6 +1817,42 @@
     const analysis = state.analysis;
     if (!analysis) return;
     const query = normalizeText(els.searchInput.value);
+
+    if (analysis.mode === 'reconciliation') {
+      const rows = analysis.reconciliationGroups
+        .filter((row) => {
+          if (!query) return true;
+          return normalizeText(Object.values(row).join(' | ')).includes(query);
+        })
+        .slice(0, 25);
+
+      const dynamicKeyHeaders = (analysis.mapping.reconciliationKeys || []).map((key) => key.label);
+      const headers = [
+        'Status_Conciliacao',
+        ...dynamicKeyHeaders,
+        'Qtde_Linhas',
+        'Qtde_Debitos',
+        'Qtde_Creditos',
+        'Valor_Positivo',
+        'Valor_Negativo',
+        'Saldo',
+        'Diferenca_Absoluta',
+        'Origens_Lados',
+      ];
+
+      els.previewTable.querySelector('thead').innerHTML = `<tr>${headers.map((h) => `<th>${escapeHTML(h)}</th>`).join('')}</tr>`;
+      els.previewTable.querySelector('tbody').innerHTML = rows.map((row) => {
+        return `<tr>${headers.map((header) => {
+          const value = row[header];
+          const isNumeric = /^Qtde_|^Valor_|Saldo|Diferenca/.test(header);
+          let display = value;
+          if (/^Valor_|Saldo|Diferenca/.test(header)) display = formatMoney(value);
+          return `<td class="${isNumeric ? 'numeric' : ''}">${escapeHTML(display ?? '-')}</td>`;
+        }).join('')}</tr>`;
+      }).join('');
+      return;
+    }
+
     const activeFilters = getActivePreviewFilters();
     const filterDefs = analysis.mapping.filterDefs;
 
@@ -1072,7 +1928,7 @@
     loadSheet(workbook.SheetNames[0]);
   }
 
-  function toBaseExportRows(items, filterDefs) {
+  function toBaseExportRows(items, filterDefs, extractionDefs) {
     return items.map((item) => {
       const row = {
         Linha_Original: item.linhaOriginal,
@@ -1080,11 +1936,16 @@
         Ano: item.ano,
         Mes: item.mes,
         Periodo: item.periodo,
+        Origem_Lado: item.origemLado || '',
         Categoria_Tratada: item.categoriaTratada,
         Nome_Extraido: item.nomeExtraido,
-        NF: item.nf,
+        Nota_Fiscal: item.nf,
       };
       filterDefs.forEach((def) => { row[def.label] = item.filterValues[def.label] || ''; });
+      (extractionDefs || []).forEach((def) => {
+        const columnName = `Ext_${def.label}`.replace(/\s+/g, '_');
+        if (columnName !== 'Ext_Nota_Fiscal') row[columnName] = item.extracoes?.[def.key] || '';
+      });
       return {
         ...row,
         Historico: item.historico,
@@ -1103,15 +1964,71 @@
   }
 
   function buildSummaryRows(analysis) {
-    const variationPct = analysis.totals.previous !== 0 ? analysis.totals.variation / analysis.totals.previous : null;
     const mapping = analysis.mapping;
     const filterNames = mapping.filterDefs.map((def) => `${def.letter} - ${def.label}`).join(', ') || 'Nenhuma';
+    const extractionNames = mapping.extractionDefs.map((def) => def.label).join(', ') || 'Nenhuma';
 
+    if (analysis.mode === 'reconciliation') {
+      const keyNames = mapping.reconciliationKeys.map((key) => key.label).join(', ') || 'Nenhuma';
+      const rows = [
+        ['Conciliação por histórico e chaves selecionadas'],
+        [],
+        ['Arquivo analisado', state.workbookName || 'Arquivo importado'],
+        ['Aba analisada', els.sheetSelect.value],
+        ['Tipo de análise', 'Conciliação'],
+        ['Visão de período', analysis.periodLabel],
+        ['Anos detectados', analysis.detectedYears.join(', ') || 'Nenhum ano identificado'],
+        ['Coluna de data', selectedColumnName(mapping.data)],
+        ['Coluna de histórico', selectedColumnName(mapping.historico)],
+        ['Coluna de débito', selectedColumnName(mapping.debito)],
+        ['Coluna de crédito', selectedColumnName(mapping.credito)],
+        ['Coluna de valor pronto', selectedColumnName(mapping.valor)],
+        ['Coluna de origem/lado', selectedColumnName(mapping.sideColumn)],
+        ['Colunas de filtros adicionais', filterNames],
+        ['Campos extraídos do histórico', extractionNames],
+        ['Chaves de conciliação', keyNames],
+        ['Tolerância de valor', mapping.tolerance],
+        ['Exige sinais opostos', mapping.requireOppositeSigns ? 'Sim' : 'Não'],
+        ['Linhas originais lidas', analysis.totals.originalRows],
+        ['Linhas usadas na conciliação', analysis.totals.usedRows],
+        ['Linhas excluídas como duplicação de bloco', analysis.totals.duplicatesRemoved],
+        ['Grupos de conciliação', analysis.totals.groups],
+        ['Grupos conciliados', analysis.totals.reconciledGroups],
+        ['Grupos pendentes/divergentes', analysis.totals.divergentGroups],
+        ['Notas fiscais identificadas', analysis.totals.invoices],
+        ['Valores extraídos distintos', analysis.totals.extractedValues],
+        ['Saldo total da base', analysis.totals.saldo],
+        ['Saldo absoluto dos grupos pendentes', analysis.totals.saldoDivergente],
+        [],
+        ['Top 15 grupos pendentes por diferença'],
+        ['Status', 'Chave_Conciliacao', 'Qtde_Linhas', 'Valor_Positivo', 'Valor_Negativo', 'Saldo', 'Diferenca_Absoluta'],
+      ];
+
+      analysis.reconciliationGroups
+        .filter((row) => row.Status_Conciliacao !== 'Conciliado' && row.Status_Conciliacao !== 'Conciliado - um lado')
+        .slice(0, 15)
+        .forEach((row) => {
+          rows.push([
+            row.Status_Conciliacao,
+            row.Chave_Conciliacao,
+            row.Qtde_Linhas,
+            row.Valor_Positivo,
+            row.Valor_Negativo,
+            row.Saldo,
+            row.Diferenca_Absoluta,
+          ]);
+        });
+
+      return rows;
+    }
+
+    const variationPct = analysis.totals.previous !== 0 ? analysis.totals.variation / analysis.totals.previous : null;
     const rows = [
       [`Comparativo ${analysis.currentYear} x ${analysis.previousYear} por nome extraído do histórico`],
       [],
       ['Arquivo analisado', state.workbookName || 'Arquivo importado'],
       ['Aba analisada', els.sheetSelect.value],
+      ['Tipo de análise', 'Comparação'],
       ['Visão de período', analysis.periodLabel],
       ['Anos detectados', analysis.detectedYears.join(', ')],
       ['Anos comparados automaticamente', `${analysis.currentYear} x ${analysis.previousYear}`],
@@ -1121,12 +2038,16 @@
       ['Coluna de crédito', selectedColumnName(mapping.credito)],
       ['Coluna de valor pronto', selectedColumnName(mapping.valor)],
       ['Colunas de filtros adicionais', filterNames],
+      ['Campos extraídos do histórico', extractionNames],
       ['Linhas originais lidas', analysis.totals.originalRows],
       ['Linhas usadas no comparativo', analysis.totals.usedRows],
       ['Linhas excluídas como duplicação de bloco', analysis.totals.duplicatesRemoved],
       ['Regra aplicada para autônomos', 'AUTONOMO + INSS S/ PF = AUTONOMO'],
+      ['Regra de nota fiscal', 'Extrai NF, NFE, NF-e, NFS-e e NOTA FISCAL do histórico, quando houver número identificável'],
       ['Critério do valor', mapping.valor === null ? 'Valor líquido = Débito - Crédito' : 'Valor líquido = coluna de valor pronto selecionada'],
       ['Nomes identificados', analysis.totals.names],
+      ['Notas fiscais identificadas', analysis.totals.invoices],
+      ['Valores extraídos distintos', analysis.totals.extractedValues],
       [`Total ${analysis.previousYear}`, analysis.totals.previous],
       [`Total ${analysis.currentYear}`, analysis.totals.current],
       ['Variação R$', analysis.totals.variation],
@@ -1178,31 +2099,61 @@
     if (!analysis) return;
 
     const filterCount = analysis.mapping.filterDefs.length;
+    const extractionCount = analysis.mapping.extractionDefs.length;
     const wb = XLSX.utils.book_new();
     const summarySheet = aoaSheet(buildSummaryRows(analysis), [54, 38, 18, 18, 18, 24]);
-    const comparisonSheet = jsonSheet(hideInternalColumns(analysis.comparison), [18, 48, ...Array(filterCount).fill(28), 12, 12, 16, 16, 16, 14, 16, 24]);
-    const periodSheet = jsonSheet(hideInternalColumns(analysis.periodSummary), [18, 12, 12, 16, 16, 16, 14]);
-    const categorySheet = jsonSheet(hideInternalColumns(analysis.categorySummary), [18, 28, 12, 12, 16, 16, 16, 14]);
-    const filterSheet = jsonSheet(hideInternalColumns(analysis.filterSummary), [28, 36, 18, 12, 12, 16, 16, 16, 14]);
-    const baseSheet = jsonSheet(toBaseExportRows(analysis.usedItems, analysis.mapping.filterDefs), [14, 12, 10, 8, 18, 24, 48, 14, ...Array(filterCount).fill(30), 80, 14, 14, 16, 20]);
-    const duplicatesSheet = jsonSheet(analysis.duplicateBlocks, [24, 24, 24, 24, 18]);
-
     XLSX.utils.book_append_sheet(wb, summarySheet, 'Resumo');
-    XLSX.utils.book_append_sheet(wb, comparisonSheet, 'Comparativo_Nome');
-    XLSX.utils.book_append_sheet(wb, periodSheet, 'Resumo_Periodo');
-    XLSX.utils.book_append_sheet(wb, categorySheet, 'Resumo_Categoria');
-    XLSX.utils.book_append_sheet(wb, filterSheet, 'Resumo_Filtros');
-    XLSX.utils.book_append_sheet(wb, baseSheet, 'Base_Tratada');
-    XLSX.utils.book_append_sheet(wb, duplicatesSheet, 'Duplicidades');
 
-    const safeName = (state.workbookName || 'comparativo')
+    if (analysis.mode === 'reconciliation') {
+      const groupSheet = jsonSheet(hideInternalColumns(analysis.reconciliationGroups), [60, ...Array((analysis.mapping.reconciliationKeys || []).length).fill(30), 22, 12, 12, 12, 12, 18, 18, 18, 18, 18, 20, 20]);
+      const lineSheet = jsonSheet(analysis.reconciliationLines, [60, 22, 16, 14, 12, 10, 18, 24, 26, 48, 16, 80, 14, 14, 16, 20]);
+      const pairSheet = jsonSheet(analysis.reconciliationPairs, [60, 20, 14, 12, 16, 80, 14, 12, 16, 80, 16]);
+      const nfAllSheet = jsonSheet(analysis.nfSummaryAll, [16, 48, 12, 18, 18, 18]);
+      const extractionAllSheet = jsonSheet(analysis.extractionSummaryAll, [28, 36, 12, 18, 18, 18]);
+      const baseSheet = jsonSheet(toBaseExportRows(analysis.usedItems, analysis.mapping.filterDefs, analysis.mapping.extractionDefs), [14, 12, 10, 8, 18, 24, 24, 48, 16, ...Array(filterCount).fill(30), ...Array(Math.max(extractionCount - 1, 0)).fill(24), 80, 14, 14, 16, 20]);
+      const duplicatesSheet = jsonSheet(analysis.duplicateBlocks, [24, 24, 24, 24, 18]);
+
+      XLSX.utils.book_append_sheet(wb, groupSheet, 'Conciliacao_Grupos');
+      XLSX.utils.book_append_sheet(wb, lineSheet, 'Conciliacao_Linhas');
+      XLSX.utils.book_append_sheet(wb, pairSheet, 'Conciliacao_Pares');
+      XLSX.utils.book_append_sheet(wb, nfAllSheet, 'Resumo_NF');
+      XLSX.utils.book_append_sheet(wb, extractionAllSheet, 'Resumo_Extracoes');
+      XLSX.utils.book_append_sheet(wb, baseSheet, 'Base_Tratada');
+      XLSX.utils.book_append_sheet(wb, duplicatesSheet, 'Duplicidades');
+    } else {
+      const comparisonSheet = jsonSheet(hideInternalColumns(analysis.comparison), [18, 48, ...Array(filterCount).fill(28), 12, 12, 16, 16, 16, 14, 16, 24]);
+      const periodSheet = jsonSheet(hideInternalColumns(analysis.periodSummary), [18, 12, 12, 16, 16, 16, 14]);
+      const categorySheet = jsonSheet(hideInternalColumns(analysis.categorySummary), [18, 28, 12, 12, 16, 16, 16, 14]);
+      const filterSheet = jsonSheet(hideInternalColumns(analysis.filterSummary), [28, 36, 18, 12, 12, 16, 16, 16, 14]);
+      const nfSheet = jsonSheet(hideInternalColumns(analysis.nfSummary), [18, 16, 48, 28, ...Array(filterCount).fill(30), 12, 12, 16, 16, 16, 14]);
+      const extractionSheet = jsonSheet(hideInternalColumns(analysis.extractionSummary), [28, 36, 18, 12, 12, 16, 16, 16, 14]);
+      const extractionNameSheet = jsonSheet(hideInternalColumns(analysis.extractionNameSummary), [28, 36, 18, 48, 12, 12, 16, 16, 16, 14]);
+      const baseSheet = jsonSheet(toBaseExportRows(analysis.usedItems, analysis.mapping.filterDefs, analysis.mapping.extractionDefs), [14, 12, 10, 8, 18, 24, 24, 48, 16, ...Array(filterCount).fill(30), ...Array(Math.max(extractionCount - 1, 0)).fill(24), 80, 14, 14, 16, 20]);
+      const duplicatesSheet = jsonSheet(analysis.duplicateBlocks, [24, 24, 24, 24, 18]);
+
+      XLSX.utils.book_append_sheet(wb, comparisonSheet, 'Comparativo_Nome');
+      XLSX.utils.book_append_sheet(wb, periodSheet, 'Resumo_Periodo');
+      XLSX.utils.book_append_sheet(wb, categorySheet, 'Resumo_Categoria');
+      XLSX.utils.book_append_sheet(wb, filterSheet, 'Resumo_Filtros');
+      XLSX.utils.book_append_sheet(wb, nfSheet, 'Resumo_NF');
+      XLSX.utils.book_append_sheet(wb, extractionSheet, 'Resumo_Extracoes');
+      XLSX.utils.book_append_sheet(wb, extractionNameSheet, 'Extracao_Nome');
+      XLSX.utils.book_append_sheet(wb, baseSheet, 'Base_Tratada');
+      XLSX.utils.book_append_sheet(wb, duplicatesSheet, 'Duplicidades');
+    }
+
+    const safeName = (state.workbookName || 'analise')
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-zA-Z0-9_-]+/g, '_')
       .replace(/_+/g, '_')
-      .replace(/^_|_$/g, '') || 'comparativo';
+      .replace(/^_|_$/g, '') || 'analise';
 
-    XLSX.writeFile(wb, `${safeName}_comparativo_${analysis.currentYear}x${analysis.previousYear}_${analysis.periodMode}.xlsx`);
+    if (analysis.mode === 'reconciliation') {
+      XLSX.writeFile(wb, `${safeName}_conciliacao_${analysis.periodMode}.xlsx`);
+    } else {
+      XLSX.writeFile(wb, `${safeName}_comparativo_${analysis.currentYear}x${analysis.previousYear}_${analysis.periodMode}.xlsx`);
+    }
   }
 
   function resetState(resetInput = true) {
@@ -1218,12 +2169,21 @@
 
     if (resetInput) els.fileInput.value = '';
     els.sheetSelect.innerHTML = '';
+    if (els.analysisModeSelect) els.analysisModeSelect.value = 'comparison';
     els.dateColumnSelect.innerHTML = '';
     els.historyColumnSelect.innerHTML = '';
     els.debitColumnSelect.innerHTML = '';
     els.creditColumnSelect.innerHTML = '';
     els.valueColumnSelect.innerHTML = '';
     els.filterColumnsSelect.innerHTML = '';
+    if (els.reconciliationKeysSelect) els.reconciliationKeysSelect.innerHTML = '';
+    if (els.sideColumnSelect) els.sideColumnSelect.innerHTML = '';
+    if (els.toleranceInput) els.toleranceInput.value = '0.01';
+    if (els.requireOppositeSignsToggle) els.requireOppositeSignsToggle.checked = true;
+    if (els.extractionFieldsSelect) {
+      Array.from(els.extractionFieldsSelect.options).forEach((option) => { option.selected = option.value === 'Nota_Fiscal'; });
+    }
+    if (els.customExtractionsInput) els.customExtractionsInput.value = '';
     els.sheetSelect.disabled = true;
     enableMappingControls(false);
     els.analyzeBtn.disabled = true;
@@ -1233,18 +2193,57 @@
     els.previewSection.classList.add('hidden');
     els.filterControls.classList.add('hidden');
     els.filterControls.innerHTML = '';
+    if (els.metricResultLabel) els.metricResultLabel.textContent = 'Resultado';
+    updateAnalysisModeUI();
     els.searchInput.value = '';
     setStatus('Nenhum arquivo carregado.', 'muted');
   }
 
   ['change'].forEach((eventName) => {
+    els.analysisModeSelect.addEventListener(eventName, () => { updateAnalysisModeUI(); els.exportBtn.disabled = true; });
     els.dateColumnSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
     els.historyColumnSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
     els.debitColumnSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
     els.creditColumnSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
     els.valueColumnSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
-    els.filterColumnsSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
+    els.filterColumnsSelect.addEventListener(eventName, () => { updateReconciliationKeyOptions(false); els.exportBtn.disabled = true; });
+    els.extractionFieldsSelect.addEventListener(eventName, () => { updateReconciliationKeyOptions(false); els.exportBtn.disabled = true; });
+    els.customExtractionsInput.addEventListener('input', () => { updateReconciliationKeyOptions(false); els.exportBtn.disabled = true; });
+    els.reconciliationKeysSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
+    els.sideColumnSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
+    els.toleranceInput.addEventListener('input', () => { els.exportBtn.disabled = true; });
+    els.requireOppositeSignsToggle.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
     els.periodModeSelect.addEventListener(eventName, () => { els.exportBtn.disabled = true; });
+  });
+
+  els.clearFilterColumnsBtn.addEventListener('click', () => {
+    setMultiSelectValues(els.filterColumnsSelect, []);
+    els.exportBtn.disabled = true;
+  });
+
+  els.selectDefaultExtractionsBtn.addEventListener('click', () => {
+    Array.from(els.extractionFieldsSelect.options).forEach((option) => {
+      option.selected = ['Nota_Fiscal', 'CNPJ_CPF', 'Competencia'].includes(option.value);
+    });
+    updateReconciliationKeyOptions(false);
+    els.exportBtn.disabled = true;
+  });
+
+  els.clearExtractionsBtn.addEventListener('click', () => {
+    Array.from(els.extractionFieldsSelect.options).forEach((option) => { option.selected = false; });
+    els.customExtractionsInput.value = '';
+    updateReconciliationKeyOptions(false);
+    els.exportBtn.disabled = true;
+  });
+
+  els.selectDefaultReconciliationKeysBtn.addEventListener('click', () => {
+    updateReconciliationKeyOptions(true);
+    els.exportBtn.disabled = true;
+  });
+
+  els.clearReconciliationKeysBtn.addEventListener('click', () => {
+    Array.from(els.reconciliationKeysSelect.options).forEach((option) => { option.selected = false; });
+    els.exportBtn.disabled = true;
   });
 
   els.fileInput.addEventListener('change', (event) => {

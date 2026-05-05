@@ -133,7 +133,8 @@ input:disabled {
 }
 
 .drop-zone small,
-.filter-column-block small {
+.filter-column-block small,
+.extraction-block small {
   color: var(--muted);
   margin-top: 8px;
   line-height: 1.45;
@@ -148,7 +149,8 @@ input:disabled {
 }
 
 .controls-grid label,
-.filter-column-block label {
+.filter-column-block label,
+.extraction-block label {
   display: grid;
   gap: 8px;
   color: var(--muted);
@@ -158,6 +160,8 @@ input:disabled {
 
 .controls-grid select,
 .filter-column-block select,
+.extraction-block select,
+.extraction-block textarea,
 .filter-controls select,
 .search-input {
   border: 1px solid var(--line);
@@ -168,12 +172,15 @@ input:disabled {
   outline: none;
 }
 
-.filter-column-block select[multiple] {
+.filter-column-block select[multiple],
+.extraction-block select[multiple] {
   min-height: 140px;
 }
 
 .controls-grid select:focus,
 .filter-column-block select:focus,
+.extraction-block select:focus,
+.extraction-block textarea:focus,
 .filter-controls select:focus,
 .search-input:focus {
   border-color: var(--primary);
@@ -196,8 +203,27 @@ input:disabled {
   height: 18px;
 }
 
-.filter-column-block {
+.filter-column-block,
+.extraction-block {
   margin-top: 18px;
+}
+
+.extraction-block {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr);
+  gap: 16px;
+}
+
+.extraction-block textarea {
+  min-height: 140px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .button-row {
@@ -257,7 +283,7 @@ input:disabled {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(130px, 1fr));
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
   gap: 14px;
   margin-bottom: 22px;
 }
@@ -394,7 +420,8 @@ dialog::backdrop {
 
   .controls-grid,
   .summary-grid,
-  .filter-controls {
+  .filter-controls,
+  .extraction-block {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -413,7 +440,98 @@ dialog::backdrop {
 
   .controls-grid,
   .summary-grid,
-  .filter-controls {
+  .filter-controls,
+  .extraction-block {
     grid-template-columns: 1fr;
+  }
+}
+
+.compact-btn {
+  align-self: flex-start;
+  margin-top: 0.45rem;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+.reconciliation-block {
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 18px;
+  background: #fbfdff;
+}
+
+.section-mini-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.section-mini-header h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  letter-spacing: -0.02em;
+}
+
+.section-mini-header small {
+  max-width: 520px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.reconciliation-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 1.25fr) repeat(3, minmax(190px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.reconciliation-grid label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.reconciliation-grid select,
+.reconciliation-grid input {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  color: var(--text);
+  background: #fff;
+  outline: none;
+}
+
+.reconciliation-grid select[multiple] {
+  min-height: 140px;
+}
+
+.reconciliation-grid select:focus,
+.reconciliation-grid input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px rgba(31, 79, 215, 0.1);
+}
+
+.reconciliation-grid small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.hidden {
+  display: none !important;
+}
+
+@media (max-width: 980px) {
+  .reconciliation-grid,
+  .extraction-block {
+    grid-template-columns: 1fr;
+  }
+
+  .section-mini-header {
+    display: block;
   }
 }
