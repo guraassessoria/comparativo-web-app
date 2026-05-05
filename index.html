@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Comparativo automático por histórico</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="page-shell">
+    <section class="hero card">
+      <div>
+        <p class="eyebrow">Análise contábil automática</p>
+        <h1>Comparativo por nome extraído do histórico</h1>
+        <p class="lead">
+          Faça upload de uma planilha Excel, selecione as colunas de data, histórico e filtros opcionais,
+          escolha a visão mensal, trimestral, semestral ou anual, e exporte um novo Excel tratado.
+        </p>
+      </div>
+      <div class="hero-actions">
+        <button id="sampleRulesBtn" class="secondary-btn" type="button">Ver regras aplicadas</button>
+      </div>
+    </section>
+
+    <section class="card uploader-card">
+      <label id="dropZone" class="drop-zone" for="fileInput">
+        <input id="fileInput" type="file" accept=".xlsx,.xls,.xlsm,.csv" />
+        <span class="upload-icon">↥</span>
+        <strong>Selecione ou arraste o arquivo Excel</strong>
+        <small>Arquivos .xlsx, .xls, .xlsm ou .csv. O processamento ocorre localmente no navegador.</small>
+      </label>
+
+      <div class="controls-grid">
+        <label>
+          Aba de origem
+          <select id="sheetSelect" disabled></select>
+        </label>
+
+        <label>
+          Visão do período
+          <select id="periodModeSelect" disabled>
+            <option value="monthly">Mensal</option>
+            <option value="quarterly">Trimestral</option>
+            <option value="semiannual">Semestral</option>
+            <option value="annual">Anual</option>
+          </select>
+        </label>
+
+        <label>
+          Coluna de data <span class="required">*</span>
+          <select id="dateColumnSelect" disabled></select>
+        </label>
+
+        <label>
+          Coluna de histórico <span class="required">*</span>
+          <select id="historyColumnSelect" disabled></select>
+        </label>
+
+        <label>
+          Coluna de débito
+          <select id="debitColumnSelect" disabled></select>
+        </label>
+
+        <label>
+          Coluna de crédito
+          <select id="creditColumnSelect" disabled></select>
+        </label>
+
+        <label>
+          Coluna de valor pronto opcional
+          <select id="valueColumnSelect" disabled></select>
+        </label>
+
+        <label class="checkbox-label">
+          <input id="removeDuplicatesToggle" type="checkbox" checked />
+          Remover blocos duplicados automaticamente
+        </label>
+      </div>
+
+      <div class="filter-column-block">
+        <label>
+          Colunas de filtros adicionais opcionais
+          <select id="filterColumnsSelect" multiple disabled></select>
+          <small>Selecione nenhuma, uma ou várias colunas. Use Ctrl/Cmd para marcar múltiplas opções.</small>
+        </label>
+      </div>
+
+      <div class="button-row">
+        <button id="analyzeBtn" class="primary-btn" disabled type="button">Analisar planilha</button>
+        <button id="exportBtn" class="primary-btn" disabled type="button">Exportar Excel tratado</button>
+        <button id="resetBtn" class="secondary-btn" disabled type="button">Limpar</button>
+      </div>
+
+      <div id="statusBox" class="status-box muted">Nenhum arquivo carregado.</div>
+    </section>
+
+    <section id="summarySection" class="summary-grid hidden" aria-live="polite">
+      <article class="metric card">
+        <span>Comparativo</span>
+        <strong id="metricComparison">-</strong>
+      </article>
+      <article class="metric card">
+        <span>Visão</span>
+        <strong id="metricPeriodMode">-</strong>
+      </article>
+      <article class="metric card">
+        <span>Linhas usadas</span>
+        <strong id="metricUsed">0</strong>
+      </article>
+      <article class="metric card">
+        <span>Duplicadas removidas</span>
+        <strong id="metricDuplicates">0</strong>
+      </article>
+      <article class="metric card">
+        <span>Nomes identificados</span>
+        <strong id="metricNames">0</strong>
+      </article>
+      <article class="metric card">
+        <span>Variação total</span>
+        <strong id="metricVariation">R$ 0,00</strong>
+      </article>
+    </section>
+
+    <section id="previewSection" class="card hidden">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Prévia</p>
+          <h2>Top 25 linhas do comparativo</h2>
+        </div>
+        <input id="searchInput" class="search-input" placeholder="Filtrar por nome, histórico, categoria ou filtro" />
+      </div>
+      <div id="filterControls" class="filter-controls hidden"></div>
+      <div class="table-wrap">
+        <table id="previewTable">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <dialog id="rulesDialog">
+      <form method="dialog" class="dialog-content">
+        <h2>Regras aplicadas</h2>
+        <ol>
+          <li>Após o upload, o usuário seleciona a aba, a coluna de data e a coluna de histórico.</li>
+          <li>A aplicação lê os anos automaticamente pela coluna de data e compara os dois anos mais recentes encontrados.</li>
+          <li>A visualização pode ser mensal, trimestral, semestral ou anual.</li>
+          <li>As colunas de filtros adicionais são opcionais e podem ser múltiplas; elas são levadas para a base tratada e para o comparativo.</li>
+          <li>Trata AUTONOMO, AUTONOMOS e INSS S/ PF como uma única categoria: AUTONOMO.</li>
+          <li>Para AUTONOMO/INSS S/ PF, consolida o nome como AUTONOMOS, exceto provisões com nome explícito no histórico.</li>
+          <li>Extrai NF e fornecedor do padrão REF. NF. 000000000 NOME HIST. ...</li>
+          <li>Para retenções de IRRF, ISS, INSS e PCC, procura a NF correspondente para recuperar o nome completo do fornecedor.</li>
+          <li>Calcula Valor Líquido = Débito - Crédito, salvo quando uma coluna de valor pronto for selecionada.</li>
+          <li>Detecta blocos inteiros repetidos e remove a segunda ocorrência quando o bloco repetido tem pelo menos 20 linhas consecutivas.</li>
+          <li>Exporta as abas: Resumo, Comparativo_Nome, Resumo_Periodo, Resumo_Categoria, Resumo_Filtros, Base_Tratada e Duplicidades.</li>
+        </ol>
+        <button class="primary-btn" type="submit">Fechar</button>
+      </form>
+    </dialog>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
