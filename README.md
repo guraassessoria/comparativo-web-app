@@ -1,19 +1,24 @@
-# Motor de análise e conciliação por histórico
+# Comparativo e Conciliação de Excel
 
-Aplicação web estática para análise contábil a partir de arquivos Excel/CSV.
+Aplicação web estática para análise de planilhas Excel diretamente no navegador.
 
-## O que faz
+## Funcionalidades
 
-- Upload de um ou mais arquivos `.xlsx`, `.xls`, `.xlsm` ou `.csv`.
-- Processamento local no navegador, sem backend.
-- Mapeamento manual das colunas de:
+- Upload de arquivos `.xlsx`, `.xls`, `.xlsm` ou `.csv`.
+- Processamento local no navegador, sem envio da planilha para servidor.
+- Seleção manual das colunas necessárias após o upload. Se existir uma aba chamada `Base unificada`, ela é selecionada automaticamente como origem:
   - data;
   - histórico;
   - débito;
   - crédito;
   - valor pronto opcional;
   - filtros adicionais opcionais.
-- Extração automática de informações do histórico:
+- Seleção do tipo de análise:
+  - comparação;
+  - conciliação.
+- Leitura automática dos períodos pela coluna de data.
+- Visões mensal, trimestral, semestral ou anual.
+- Extração de informações do histórico:
   - nome;
   - nota fiscal;
   - CNPJ/CPF;
@@ -22,85 +27,63 @@ Aplicação web estática para análise contábil a partir de arquivos Excel/CSV
   - pedido/OC;
   - parcela;
   - documento;
-  - campos personalizados por regex.
-- Tratamento de `AUTONOMO`, `AUTONOMOS` e `INSS S/ PF` como `AUTONOMO`.
-- Exportação de Excel tratado.
+  - extrações personalizadas por regex.
+- Consolidação de `AUTONOMO`, `AUTONOMOS` e `INSS S/ PF` como `AUTONOMO`.
+- Exportação para Excel com abas de resultado.
 
-## Tipos de análise
+## Ajuste visual da versão v11
 
-### 1. Comparação
+Os seletores de coluna exibem **somente a letra da coluna e o cabeçalho detectado**.
 
-Compara automaticamente os dois anos mais recentes encontrados na coluna de data. O usuário pode escolher a visão:
+Exemplo:
 
-- mensal;
-- trimestral;
-- semestral;
-- anual.
+```text
+A — DATA
+B — CONTA CONTABIL
+C — CENTRO CUSTO
+E — HISTORICO
+H — DEBITO
+I — CREDITO
+```
 
-### 2. Conciliação
+A aplicação não mostra mais amostras das primeiras linhas em menus, títulos, tooltips ou mapa de colunas.
 
-A conciliação pode ser feita de duas formas.
+Quando a planilha não possui cabeçalho detectável, os seletores exibem apenas:
 
-#### Dentro de um único arquivo/aba
-
-Agrupa lançamentos pelas chaves selecionadas e verifica se os valores se compensam dentro da tolerância.
-
-Uso típico:
-
-- provisão x baixa;
-- débito x crédito;
-- imposto retido x nota fiscal;
-- lançamentos duplicados ou pendentes dentro da mesma base.
-
-#### Entre arquivos/abas
-
-Permite carregar dois ou mais arquivos, ou usar abas diferentes de um mesmo arquivo, e comparar totais por origem usando as chaves selecionadas.
-
-Uso típico:
-
-- razão contábil x extrato;
-- contas a pagar x contabilidade;
-- sistema operacional x ERP;
-- base do cliente x base interna.
-
-Neste modo, cada fonte selecionada vira uma origem/lado. A aplicação pode conciliar por:
-
-- **saldo do grupo zerado**, útil quando os valores aparecem com sinais opostos; ou
-- **totais absolutos por origem**, útil quando os arquivos têm valores com o mesmo sinal.
-
-### Tratamento de divergência de valor
-
-Quando a conciliação usa **Nota Fiscal + Nome extraído** como chave e encontra contraparte pela chave, mas o valor fica diferente acima da tolerância, o grupo passa a ser marcado como **Divergência de valor**.
-
-Na aba `Conciliacao_Pares`, o par correspondente é marcado como **Verificar - valor divergente**, em vez de aparecer apenas como linha sem par. Isso permite auditar rapidamente casos em que a identificação bate, mas o valor não fecha.
+```text
+A — Coluna A
+B — Coluna B
+C — Coluna C
+```
 
 ## Publicação no GitHub Pages
 
-1. Suba estes arquivos na raiz do repositório:
-   - `index.html`
-   - `styles.css`
-   - `app.js`
-   - `README.md`
-   - `.nojekyll`
-2. Vá em **Settings > Pages**.
-3. Em **Build and deployment**, selecione **Deploy from a branch**.
-4. Escolha:
-   - branch: `main`
-   - folder: `/ (root)`
-5. Clique em **Save**.
+Suba estes arquivos na raiz do repositório:
 
-## Observação importante
+```text
+index.html
+styles.css
+app.js
+README.md
+.nojekyll
+```
 
-Na conciliação entre arquivos/abas, a aplicação usa o mesmo mapeamento de colunas para todas as fontes selecionadas. Portanto, o melhor resultado ocorre quando os arquivos têm layout equivalente ou colunas nas mesmas posições.
+Depois vá em:
 
-## Ajuste de rótulos das colunas
+```text
+Settings > Pages > Build and deployment
+```
 
-Quando a planilha não possui cabeçalho detectável, os seletores exibem apenas a letra da coluna, por exemplo `A — Coluna A`, `B — Coluna B` etc. As amostras das células não são mais concatenadas no rótulo do seletor, para evitar opções confusas em abas resumidas, pivotadas ou com várias linhas de título.
+Configure:
 
-Se a aba tiver cabeçalho claro, o seletor exibirá a letra e o nome do cabeçalho, por exemplo `D — Histórico`.
+```text
+Source: Deploy from a branch
+Branch: main
+Folder: / (root)
+```
 
-## Versão v10 — melhoria visual dos seletores
+Salve e aguarde a publicação.
 
-Os seletores de colunas agora usam rótulos curtos e estáveis, como `A — DATA`, `E — HISTORICO`, `H — DEBITO` ou `A — Coluna A`.
+## Observação
 
-As amostras de dados foram movidas para o painel **Mapa de colunas**, abaixo dos seletores. Assim o usuário consegue conferir os dados sem que o menu de seleção fique poluído com textos longos, datas e valores concatenados.
+A aplicação usa SheetJS via CDN. O navegador precisa ter acesso ao script externo para ler e gerar arquivos Excel.
