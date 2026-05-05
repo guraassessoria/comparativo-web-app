@@ -98,3 +98,9 @@ Na conciliação entre arquivos/abas, a aplicação usa o mesmo mapeamento de co
 Quando a planilha não possui cabeçalho detectável, os seletores exibem apenas a letra da coluna, por exemplo `A — Coluna A`, `B — Coluna B` etc. As amostras das células não são mais concatenadas no rótulo do seletor, para evitar opções confusas em abas resumidas, pivotadas ou com várias linhas de título.
 
 Se a aba tiver cabeçalho claro, o seletor exibirá a letra e o nome do cabeçalho, por exemplo `D — Histórico`.
+
+## Versão v10 — melhoria visual dos seletores
+
+Os seletores de colunas agora usam rótulos curtos e estáveis, como `A — DATA`, `E — HISTORICO`, `H — DEBITO` ou `A — Coluna A`.
+
+As amostras de dados foram movidas para o painel **Mapa de colunas**, abaixo dos seletores. Assim o usuário consegue conferir os dados sem que o menu de seleção fique poluído com textos longos, datas e valores concatenados.

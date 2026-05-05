@@ -21,6 +21,8 @@
     sheetSelect: document.getElementById('sheetSelect'),
     sourceSheetsBlock: document.getElementById('sourceSheetsBlock'),
     sourceSheetsSelect: document.getElementById('sourceSheetsSelect'),
+    columnPreviewBlock: document.getElementById('columnPreviewBlock'),
+    columnPreviewTable: document.getElementById('columnPreviewTable'),
     selectAllSourcesBtn: document.getElementById('selectAllSourcesBtn'),
     clearSourcesBtn: document.getElementById('clearSourcesBtn'),
     analysisModeSelect: document.getElementById('analysisModeSelect'),
@@ -273,19 +275,42 @@
     return rows.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0);
   }
 
+  function formatSampleValue(value) {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return formatDateBR(value);
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+    if (!text) return '';
+    return text.length > 28 ? `${text.slice(0, 28)}...` : text;
+  }
+
   function sampleColumnValues(rows, index, headerRowIndex) {
     const start = headerRowIndex >= 0 ? headerRowIndex + 1 : 0;
     const samples = [];
-    for (let i = start; i < rows.length && samples.length < 5; i += 1) {
-      const value = rows[i]?.[index];
-      const text = String(value ?? '').replace(/\s+/g, ' ').trim();
-      if (text) samples.push(text.length > 42 ? `${text.slice(0, 42)}...` : text);
+    for (let i = start; i < rows.length && samples.length < 3; i += 1) {
+      const text = formatSampleValue(rows[i]?.[index]);
+      if (text) samples.push(text);
     }
     return samples;
   }
 
-  function cleanColumnLabel(value, fallback) {
-    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  function compactColumnLabel(value, fallback) {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return fallback;
+
+    let text = String(value ?? '')
+      .replace(/[\r\n\t]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!text) return fallback;
+
+    // Remove resíduos de versões anteriores, quando o rótulo trazia amostras concatenadas por "|".
+    text = text.split('|')[0].trim();
+
+    // Se a célula de cabeçalho parece um valor de linha, não a use como rótulo visual.
+    if (/^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(text)) return fallback;
+    if (/^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} \d{4}/.test(text)) return fallback;
+    if (/^\d{4}-\d{1,2}-\d{1,2}/.test(text)) return fallback;
+    if (text.length > 34) text = `${text.slice(0, 31)}...`;
+
     return text || fallback;
   }
 
@@ -296,9 +321,9 @@
 
     return Array.from({ length: maxCols }, (_, index) => {
       const letter = colLetter(index);
-      const rawHeader = String(headerRow[index] ?? '').trim();
+      const rawHeader = headerRow[index];
       const samples = sampleColumnValues(rows, index, headerRowIndex);
-      let label = cleanColumnLabel(rawHeader, `Coluna ${letter}`);
+      let label = compactColumnLabel(rawHeader, `Coluna ${letter}`);
       const count = usedLabels.get(label) || 0;
       usedLabels.set(label, count + 1);
       const uniqueLabel = count ? `${label} (${letter})` : label;
@@ -352,6 +377,29 @@
       if (def.sampleText) option.title = `Amostras: ${def.sampleText}`;
       select.appendChild(option);
     });
+  }
+
+  function renderColumnPreview(columnDefs) {
+    if (!els.columnPreviewBlock || !els.columnPreviewTable) return;
+    const tbody = els.columnPreviewTable.querySelector('tbody');
+    if (!columnDefs.length) {
+      els.columnPreviewBlock.classList.add('hidden');
+      if (tbody) tbody.innerHTML = '';
+      return;
+    }
+
+    const rows = columnDefs.map((def) => {
+      const samples = def.sampleText || 'Sem amostra';
+      return `
+        <tr>
+          <td><strong>${escapeHTML(def.letter)}</strong></td>
+          <td>${escapeHTML(def.optionText)}</td>
+          <td>${escapeHTML(samples)}</td>
+        </tr>`;
+    }).join('');
+
+    if (tbody) tbody.innerHTML = rows;
+    els.columnPreviewBlock.classList.remove('hidden');
   }
 
   function setSelectValue(select, index, fallbackIndex = null) {
@@ -469,6 +517,7 @@
     addColumnOptions(els.valueColumnSelect, state.columnDefs, true, 'Não usar: calcular Débito - Crédito');
     addColumnOptions(els.filterColumnsSelect, state.columnDefs);
     if (els.sideColumnSelect) addColumnOptions(els.sideColumnSelect, state.columnDefs, true, 'Não usar origem/lado');
+    renderColumnPreview(state.columnDefs);
 
     setSelectValue(els.dateColumnSelect, defaults.data, fallback.data);
     setSelectValue(els.historyColumnSelect, defaults.historico, fallback.historico);
@@ -2606,6 +2655,8 @@
     els.previewSection.classList.add('hidden');
     els.filterControls.classList.add('hidden');
     els.filterControls.innerHTML = '';
+    if (els.columnPreviewBlock) els.columnPreviewBlock.classList.add('hidden');
+    if (els.columnPreviewTable) els.columnPreviewTable.querySelector('tbody').innerHTML = '';
     if (els.metricResultLabel) els.metricResultLabel.textContent = 'Resultado';
     updateAnalysisModeUI();
     els.searchInput.value = '';
